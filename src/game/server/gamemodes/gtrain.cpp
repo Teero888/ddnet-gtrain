@@ -482,15 +482,26 @@ void CGameControllerGTrain::Fight(int ClientId, const char *pName)
 		GameServer()->SendChatTarget(ClientId, "You are already in the same fight.");
 		return;
 	}
+	// Joining players enter the target group's current attempt, so the target
+	// group keeps its positions. Dead joiners are placed there on respawn.
+	const CAttempt &TargetAttempt = m_aAttempts[TargetGroup];
+	const bool JoinAttempt = TargetAttempt.m_pGoal && TargetAttempt.m_Start >= 0;
 	for(int Other = 0; Other < MAX_CLIENTS; ++Other)
-		if(m_aFightGroup[Other] == SourceGroup)
-			m_aFightGroup[Other] = TargetGroup;
+	{
+		if(m_aFightGroup[Other] != SourceGroup)
+			continue;
+		m_aFightGroup[Other] = TargetGroup;
+		CCharacter *pChr = GameServer()->GetPlayerChar(Other);
+		if(JoinAttempt && pChr)
+			PlaceForAttempt(pChr, TargetAttempt.m_pGoal, TargetAttempt.m_Start, TargetAttempt.m_TargetDistance);
+	}
 	m_aFightRestart[SourceGroup] = false;
 	m_aFreeplay[SourceGroup] = false;
-	m_aFightRestart[TargetGroup] = true;
+	if(!JoinAttempt)
+		m_aFightRestart[TargetGroup] = true;
 	UpdateFightTeams();
 	char aMessage[160];
-	str_format(aMessage, sizeof(aMessage), "'%s' joined the fight with '%s'. Everyone starts a new attempt. Use /fight to leave.",
+	str_format(aMessage, sizeof(aMessage), "'%s' joined the fight with '%s'. Use /fight to leave.",
 		Server()->ClientName(ClientId), Server()->ClientName(Target));
 	for(int Other = 0; Other < MAX_CLIENTS; ++Other)
 		if(m_aFightGroup[Other] == TargetGroup && GameServer()->m_apPlayers[Other])

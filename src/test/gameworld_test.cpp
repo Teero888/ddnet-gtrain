@@ -1181,6 +1181,72 @@ TEST_F(GameWorld, GTrainFightChainingDeathAndCapture)
 	EXPECT_EQ(RemainingLogger.ConcatenatedLines().find("'Wilson':"), std::string::npos);
 }
 
+TEST_F(GameWorld, GTrainFightJoinKeepsTargetAttempt)
+{
+	PrepareTrainingCorridor();
+	const auto vIds = SpawnTrainingPlayers({"Anna", "Bob", "Wilson", "Observer"});
+	const int Anna = vIds[0], Bob = vIds[1], Wilson = vIds[2], Observer = vIds[3];
+	auto *pController = static_cast<CGameControllerGTrain *>(GameServer()->m_pController);
+	CCharacter *pTarget = GameServer()->GetPlayerChar(Anna);
+	CCharacter *pJoiner = GameServer()->GetPlayerChar(Bob);
+	const vec2 Start = pTarget->m_Pos;
+	const vec2 Goal = TrainingGoal(Anna);
+	const vec2 ObserverPosition = GameServer()->GetPlayerChar(Observer)->m_Pos;
+	const vec2 ObserverGoal = TrainingGoal(Observer);
+	for(CCharacter *pChr : {pTarget, pJoiner})
+		pChr->Unfreeze();
+	pController->Tick();
+	const vec2 TargetPosition = Start + normalize(Goal - Start) * 32.0f;
+	pTarget->m_Pos = pTarget->m_PrevPos = TargetPosition;
+	pTarget->SetPosition(TargetPosition);
+	pTarget->SetVelocity(vec2(3, 4));
+	const vec2 JoinerPosition = Start - normalize(Goal - Start) * 32.0f;
+	pJoiner->m_Pos = pJoiner->m_PrevPos = JoinerPosition;
+	pJoiner->SetPosition(JoinerPosition);
+	pJoiner->SetVelocity(vec2(5, 6));
+	const auto CheckTargetKept = [&] {
+		EXPECT_EQ(GameServer()->GetPlayerChar(Anna), pTarget);
+		EXPECT_EQ(pTarget->m_Pos, TargetPosition);
+		EXPECT_EQ(pTarget->Core()->m_Vel, vec2(3, 4));
+		EXPECT_FALSE(pTarget->m_ZeroGravity);
+		EXPECT_EQ(pTarget->m_FreezeTime, 0);
+		EXPECT_EQ(TrainingGoal(Anna), Goal);
+		EXPECT_EQ(GameServer()->GetPlayerChar(Observer)->m_Pos, ObserverPosition);
+		EXPECT_EQ(TrainingGoal(Observer), ObserverGoal);
+	};
+
+	// The joiner starts the target's current attempt; the target keeps playing.
+	m_pServer->m_avChatMessages[Anna].clear();
+	m_pServer->Console()->ExecuteLineFlag("fight Anna", CFGFLAG_CHAT, Bob);
+	pController->Tick();
+	CheckTargetKept();
+	EXPECT_EQ(GameServer()->GetPlayerChar(Bob), pJoiner);
+	EXPECT_EQ(pJoiner->m_Pos, Start);
+	EXPECT_EQ(pJoiner->Core()->m_Vel, vec2(0, 0));
+	EXPECT_TRUE(pJoiner->m_ZeroGravity);
+	EXPECT_EQ(pJoiner->m_FreezeTime, 50);
+	EXPECT_EQ(TrainingGoal(Bob), Goal);
+	EXPECT_GT(pController->Teams().ScoreboardTeam(Anna), 0);
+	EXPECT_EQ(pController->Teams().ScoreboardTeam(Bob), pController->Teams().ScoreboardTeam(Anna));
+	ASSERT_FALSE(m_pServer->m_avChatMessages[Anna].empty());
+	EXPECT_EQ(m_pServer->m_avChatMessages[Anna].back(), "'Bob' joined the fight with 'Anna'. Use /fight to leave.");
+
+	// A dead player joining through a member enters the same attempt on respawn.
+	GameServer()->m_apPlayers[Wilson]->KillCharacter(WEAPON_SELF);
+	pController->Fight(Wilson, "Bob");
+	pController->Tick();
+	CheckTargetKept();
+	EXPECT_EQ(GameServer()->GetPlayerChar(Bob), pJoiner);
+	EXPECT_EQ(pJoiner->m_Pos, Start);
+	CCharacter *pRespawned = GameServer()->m_apPlayers[Wilson]->ForceSpawn(vec2(80, 80));
+	pController->Tick();
+	CheckTargetKept();
+	EXPECT_EQ(pRespawned->m_Pos, Start);
+	EXPECT_TRUE(pRespawned->m_ZeroGravity);
+	EXPECT_EQ(TrainingGoal(Wilson), Goal);
+	EXPECT_EQ(pController->Teams().ScoreboardTeam(Wilson), pController->Teams().ScoreboardTeam(Anna));
+}
+
 TEST_F(GameWorld, GTrainFightTeamsMergeLeaveAndDisconnect)
 {
 	PrepareTrainingCorridor();
