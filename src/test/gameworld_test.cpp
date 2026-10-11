@@ -1247,6 +1247,59 @@ TEST_F(GameWorld, GTrainFightJoinKeepsTargetAttempt)
 	EXPECT_EQ(pController->Teams().ScoreboardTeam(Wilson), pController->Teams().ScoreboardTeam(Anna));
 }
 
+TEST_F(GameWorld, GTrainFightAllowsPausedPlayersButNotSpectators)
+{
+	PrepareTrainingCorridor();
+	const auto vIds = SpawnTrainingPlayers({"Anna", "Bob", "Wilson", "Viewer"});
+	const int Anna = vIds[0], Bob = vIds[1], Wilson = vIds[2], Viewer = vIds[3];
+	auto *pController = static_cast<CGameControllerGTrain *>(GameServer()->m_pController);
+	CCharacter *pTarget = GameServer()->GetPlayerChar(Anna);
+	const vec2 Start = pTarget->m_Pos;
+	const vec2 Goal = TrainingGoal(Anna);
+
+	// A /spec target can be fought and stays paused in place.
+	GameServer()->m_apPlayers[Anna]->Pause(CPlayer::PAUSE_SPEC, true);
+	pTarget->Pause(true);
+	m_pServer->m_avChatMessages[Bob].clear();
+	m_pServer->Console()->ExecuteLineFlag("fight Anna", CFGFLAG_CHAT, Bob);
+	pController->Tick();
+	ASSERT_FALSE(m_pServer->m_avChatMessages[Bob].empty());
+	EXPECT_EQ(m_pServer->m_avChatMessages[Bob].back(), "'Bob' joined the fight with 'Anna'. Use /fight to leave.");
+	const int Team = pController->Teams().ScoreboardTeam(Anna);
+	EXPECT_GT(Team, 0);
+	EXPECT_EQ(pController->Teams().ScoreboardTeam(Bob), Team);
+	EXPECT_EQ(GameServer()->GetPlayerChar(Anna), pTarget);
+	EXPECT_TRUE(pTarget->IsPaused());
+	EXPECT_EQ(pTarget->m_Pos, Start);
+	EXPECT_EQ(TrainingGoal(Anna), Goal);
+	EXPECT_EQ(GameServer()->GetPlayerChar(Bob)->m_Pos, Start);
+	EXPECT_EQ(TrainingGoal(Bob), Goal);
+
+	// A paused player can join too and enters the current attempt.
+	GameServer()->m_apPlayers[Wilson]->Pause(CPlayer::PAUSE_PAUSED, true);
+	ASSERT_NE(GameServer()->m_apPlayers[Wilson]->IsPaused(), 0);
+	pController->Fight(Wilson, "Bob");
+	pController->Tick();
+	EXPECT_EQ(pController->Teams().ScoreboardTeam(Wilson), Team);
+	EXPECT_EQ(GameServer()->GetPlayerChar(Wilson)->m_Pos, Start);
+	EXPECT_EQ(TrainingGoal(Wilson), Goal);
+	EXPECT_EQ(pTarget->m_Pos, Start);
+
+	// Players in the spectator team can neither fight nor be fought.
+	GameServer()->m_apPlayers[Viewer]->SetTeam(TEAM_SPECTATORS, false);
+	for(const auto &[ClientId, Name] : {std::pair{Viewer, "Anna"}, {Bob, "Viewer"}})
+	{
+		m_pServer->m_avChatMessages[ClientId].clear();
+		pController->Fight(ClientId, Name);
+		ASSERT_FALSE(m_pServer->m_avChatMessages[ClientId].empty());
+		EXPECT_EQ(m_pServer->m_avChatMessages[ClientId].back(), "Spectators cannot join a fight.");
+	}
+	pController->Tick();
+	EXPECT_EQ(pController->Teams().ScoreboardTeam(Viewer), 0);
+	for(int ClientId : {Anna, Bob, Wilson})
+		EXPECT_EQ(pController->Teams().ScoreboardTeam(ClientId), Team);
+}
+
 TEST_F(GameWorld, GTrainFightTeamsMergeLeaveAndDisconnect)
 {
 	PrepareTrainingCorridor();

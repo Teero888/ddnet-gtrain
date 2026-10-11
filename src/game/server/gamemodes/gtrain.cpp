@@ -465,9 +465,10 @@ void CGameControllerGTrain::Fight(int ClientId, const char *pName)
 		return;
 	}
 	CPlayer *pTarget = GameServer()->m_apPlayers[Target];
-	if(pPlayer->GetTeam() == TEAM_SPECTATORS || pTarget->GetTeam() == TEAM_SPECTATORS || pPlayer->IsPaused() || pTarget->IsPaused())
+	// Paused and /spec players keep their characters and can fight.
+	if(pPlayer->GetTeam() == TEAM_SPECTATORS || pTarget->GetTeam() == TEAM_SPECTATORS)
 	{
-		GameServer()->SendChatTarget(ClientId, "Both players must be playing and unpaused to join a fight.");
+		GameServer()->SendChatTarget(ClientId, "Spectators cannot join a fight.");
 		return;
 	}
 	if(m_vTrainPositions.empty())
