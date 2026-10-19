@@ -5,6 +5,7 @@ A server-side [DDNet](https://github.com/ddnet/ddnet) mod for training Gores map
 ## How it works
 
 - Every spawn puts you at a random spot between the start and the finish line, always above freeze. You hover frozen for one second, then play.
+- While hovering you stand on a small laser door that opens exactly at the release. Clients predict it like any map door, so the start looks the same at every ping (recent DDNet clients). Maps without a switch layer are served with an empty one added, since doors need it.
 - A personal blue flag is placed a set number of path tiles ahead (100 by default). A particle trail shows the shortest path to it.
 - Reach the flag to capture it. The capture message shows how many fails it took (and your time when training alone), then you get a new spot.
 - The race timer restarts with every attempt, so it always shows the time of your current try.
@@ -53,6 +54,7 @@ Build the server as described in the [DDNet building guide](docs/BUILDING.md) an
 | Setting | Default | Description |
 | --- | --- | --- |
 | `sv_gtrain_goal_distance` | 100 | Goal distance in tiles for players who didn't set `/distance` |
+| `sv_gtrain_hover_door` | 1 | Hold hovering tees with a laser door; 0 uses zero gravity, which high ping clients mispredict at the release |
 | `sv_gtrain_path_clear_radius` | 64 | Particle-free radius around the player in world units (32 per tile); 0 shows the whole path |
 | `sv_gtrain_path_particle_spacing` | 192 | Distance between path particles in world units |
 | `sv_require_chat_flag_to_chat` | 0 | Set to 1 so new players must show the chat bubble before chatting during their first 20 seconds; commands are unaffected (from [ddnet-insta](https://github.com/ddnet-insta/ddnet-insta/commit/9b7c415b19510dc04157dfaa05596c077ca02ec6)) |

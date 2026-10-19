@@ -40,6 +40,8 @@ class CGameControllerGTrain : public CGameControllerDDNet
 		int m_Start = -1;
 		int m_TargetDistance = 0;
 		int m_StartTick = -1;
+		// tile of the laser door holding the hovering tee, -1 for zero gravity
+		int m_DoorIndex = -1;
 		// retries of this start and goal, after death or /r
 		int m_Fails = 0;
 		std::vector<int> m_vRoute;
@@ -64,10 +66,15 @@ class CGameControllerGTrain : public CGameControllerDDNet
 	int m_aFightWins[MAX_CLIENTS] = {};
 	CSettings m_aSettings[MAX_CLIENTS];
 	bool m_SyncFightDeaths = false;
+	// switch number of the hover doors, -1 without door collision
+	int m_DoorSwitch = -1;
+	std::array<std::optional<int>, MAX_CLIENTS> m_aDoorSnapIds;
 	std::optional<int> m_FlagSnapId;
 	std::array<std::optional<int>, NUM_DIRECTION_PARTICLES> m_aDirectionSnapIds;
 
 	void FindTrainPositions();
+	int HoverDoorIndex(int Start, class CCharacter *pChr) const;
+	void DelayHoverDoor(class CCharacter *pChr);
 	void PlaceRandomly(class CCharacter *pChr);
 	void PlaceForAttempt(class CCharacter *pChr, const std::shared_ptr<CGTrainGoal> &pGoal, int Start, int TargetDistance, bool Retry);
 	void RestartFight(int Group);
@@ -86,6 +93,7 @@ class CGameControllerGTrain : public CGameControllerDDNet
 public:
 	CGameControllerGTrain(class CGameContext *pGameServer);
 	~CGameControllerGTrain() override;
+	static bool AddSwitchLayer(class IStorage *pStorage, const char *pPath, char *pNewPath, int NewPathSize);
 
 	void OnCharacterSpawn(class CCharacter *pChr) override;
 	int OnCharacterDeath(class CCharacter *pVictim, class CPlayer *pKiller, int Weapon) override;

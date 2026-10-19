@@ -1,9 +1,12 @@
 #include "gtrain.h"
 
+#include <base/fs.h>
 #include <base/log.h>
 #include <base/secure.h>
 
 #include <engine/shared/config.h>
+#include <engine/shared/datafile.h>
+#include <engine/storage.h>
 
 #include <generated/server_data.h>
 
@@ -32,6 +35,22 @@ CGameControllerGTrain::CGameControllerGTrain(class CGameContext *pGameServer) :
 	m_FlagSnapId = Server()->SnapNewId();
 	for(auto &SnapId : m_aDirectionSnapIds)
 		SnapId = Server()->SnapNewId();
+	for(auto &SnapId : m_aDoorSnapIds)
+		SnapId = Server()->SnapNewId();
+
+	// Hover doors need door collision, which only exists with a switch layer
+	// (see AddSwitchLayer), and a switch number the map leaves free. It stays
+	// off for every team except while a door holds one of its tees.
+	CCollision *pCollision = GameServer()->Collision();
+	if(pCollision->SwitchLayer() && pCollision->m_HighestSwitchNumber < 255)
+	{
+		m_DoorSwitch = pCollision->m_HighestSwitchNumber + 1;
+		pCollision->m_HighestSwitchNumber = m_DoorSwitch;
+		GameServer()->m_World.m_Core.InitSwitchers(m_DoorSwitch);
+		SSwitchers &Switcher = GameServer()->Switchers()[m_DoorSwitch];
+		Switcher.m_Initial = false;
+		std::fill(std::begin(Switcher.m_aStatus), std::end(Switcher.m_aStatus), false);
+	}
 
 	FindTrainPositions();
 	Teams().SetScoreboardTeams(m_aScoreboardTeams);
@@ -44,6 +63,87 @@ CGameControllerGTrain::~CGameControllerGTrain()
 	for(auto SnapId : m_aDirectionSnapIds)
 		if(SnapId)
 			Server()->SnapFreeId(*SnapId);
+	for(auto SnapId : m_aDoorSnapIds)
+		if(SnapId)
+			Server()->SnapFreeId(*SnapId);
+}
+
+bool CGameControllerGTrain::AddSwitchLayer(IStorage *pStorage, const char *pPath, char *pNewPath, int NewPathSize)
+{
+	// Door collision only exists in maps with a switch layer, on the server
+	// and on clients. Maps without one are served with an empty one added in
+	// a group of its own, which clients download like any changed map.
+	pNewPath[0] = '\0';
+	CDataFileReader Reader;
+	if(!Reader.Open(pStorage, pPath, IStorage::TYPE_ALL))
+		return false;
+	int GroupsStart, NumGroups, LayersStart, NumLayers;
+	Reader.GetType(MAPITEMTYPE_GROUP, &GroupsStart, &NumGroups);
+	Reader.GetType(MAPITEMTYPE_LAYER, &LayersStart, &NumLayers);
+	int Width = 0, Height = 0;
+	for(int i = 0; i < NumLayers; ++i)
+	{
+		const auto *pLayer = static_cast<const CMapItemLayerTilemap_v2 *>(Reader.GetItem(LayersStart + i));
+		if(Reader.GetItemSize(LayersStart + i) < (int)sizeof(CMapItemLayerTilemap_v2) || pLayer->m_Layer.m_Type != LAYERTYPE_TILES)
+			continue;
+		if(pLayer->m_Flags & TILESLAYERFLAG_SWITCH)
+			return true;
+		if(pLayer->m_Flags & TILESLAYERFLAG_GAME)
+		{
+			Width = pLayer->m_Width;
+			Height = pLayer->m_Height;
+		}
+	}
+	if(Width <= 0 || Height <= 0)
+		return false;
+
+	CDataFileWriter Writer;
+	for(int i = 0; i < Reader.NumItems(); ++i)
+	{
+		int Type, Id;
+		void *pData = Reader.GetItem(i, &Type, &Id);
+		Writer.AddItem(Type, Id, Reader.GetItemSize(i), pData);
+	}
+	for(int i = 0; i < Reader.NumData(); ++i)
+	{
+		Writer.AddData(Reader.GetDataSize(i), Reader.GetData(i));
+		Reader.UnloadData(i);
+	}
+	Reader.Close();
+
+	CMapItemLayerTilemap Layer = {};
+	Layer.m_Layer.m_Type = LAYERTYPE_TILES;
+	Layer.m_Version = 3;
+	Layer.m_Width = Width;
+	Layer.m_Height = Height;
+	Layer.m_Flags = TILESLAYERFLAG_SWITCH;
+	Layer.m_Color = {255, 255, 255, 255};
+	Layer.m_ColorEnv = -1;
+	Layer.m_Image = -1;
+	Layer.m_Tele = Layer.m_Speedup = Layer.m_Front = Layer.m_Tune = -1;
+	const std::vector<CTile> vTiles((size_t)Width * Height, CTile{});
+	const std::vector<CSwitchTile> vSwitchTiles((size_t)Width * Height, CSwitchTile{});
+	Layer.m_Data = Writer.AddData(vTiles.size() * sizeof(CTile), vTiles.data());
+	Layer.m_Switch = Writer.AddData(vSwitchTiles.size() * sizeof(CSwitchTile), vSwitchTiles.data());
+	StrToInts(Layer.m_aName, std::size(Layer.m_aName), "Switch");
+	Writer.AddItem(MAPITEMTYPE_LAYER, NumLayers, sizeof(Layer), &Layer);
+
+	CMapItemGroup Group = {};
+	Group.m_Version = 3;
+	Group.m_ParallaxX = 100;
+	Group.m_ParallaxY = 100;
+	Group.m_StartLayer = NumLayers;
+	Group.m_NumLayers = 1;
+	StrToInts(Group.m_aName, std::size(Group.m_aName), "GTrain");
+	Writer.AddItem(MAPITEMTYPE_GROUP, NumGroups, sizeof(Group), &Group);
+
+	// The save path may lack the map's folder, its root always exists.
+	char aTemp[IO_MAX_PATH_LENGTH];
+	if(!Writer.Open(pStorage, IStorage::FormatTmpPath(aTemp, sizeof(aTemp), fs_filename(pPath))))
+		return false;
+	Writer.Finish();
+	str_copy(pNewPath, aTemp, NewPathSize);
+	return true;
 }
 
 void CGameControllerGTrain::FindTrainPositions()
@@ -316,9 +416,51 @@ void CGameControllerGTrain::PlaceForAttempt(CCharacter *pChr, const std::shared_
 	// the player didn't pass the start line, so finishing must not count
 	pChr->m_DDRaceState = ERaceState::CHEATED;
 
-	// hover in place until the freeze is over
+	// Hover in place until the freeze is over. A tuning change only applies
+	// on clients once it arrives, after their prediction passed the release.
+	// A laser door below the tee instead holds it under normal gravity, and
+	// its timed switch opens it on the last frozen tick: clients predict both
+	// from snapshots, so the release looks the same at any ping.
 	pChr->ForceFreeze(HOVER_TICKS);
-	pChr->SetZeroGravity(true);
+	Attempt.m_DoorIndex = HoverDoorIndex(Start, pChr);
+	if(Attempt.m_DoorIndex >= 0)
+	{
+		const vec2 DoorPos = GameServer()->Collision()->GetPos(Attempt.m_DoorIndex);
+		GameServer()->Collision()->SetDoorCollisionAt(DoorPos.x, DoorPos.y, TILE_STOPA, 0, m_DoorSwitch);
+		SSwitchers &Switcher = GameServer()->Switchers()[m_DoorSwitch];
+		Switcher.m_aStatus[pChr->Team()] = true;
+		Switcher.m_aEndTick[pChr->Team()] = Server()->Tick() + HOVER_TICKS - 1;
+		Switcher.m_aType[pChr->Team()] = TILE_SWITCHTIMEDOPEN;
+	}
+	pChr->SetZeroGravity(Attempt.m_DoorIndex < 0);
+}
+
+int CGameControllerGTrain::HoverDoorIndex(int Start, CCharacter *pChr) const
+{
+	if(m_DoorSwitch < 0 || !g_Config.m_SvGtrainHoverDoor || pChr->Team() == TEAM_SUPER)
+		return -1;
+	CCollision *pCollision = GameServer()->Collision();
+	const vec2 Below = m_PathGraph.m_vNodes[Start].m_Pos + vec2(0, 32);
+	if(Below.y >= pCollision->GetHeight() * 32)
+		return -1;
+	// Clients only lay doors down from tiles without solid, death or laser
+	// blockers. Doors of the map itself are kept.
+	const int Index = pCollision->GetPureMapIndex(Below);
+	CDoorTile Door;
+	pCollision->GetDoorTile(Index, &Door);
+	if(pCollision->GetTile(Below.x, Below.y) || pCollision->GetFrontTile(Below.x, Below.y) || (Door.m_Index && Door.m_Number != m_DoorSwitch))
+		return -1;
+	return Index;
+}
+
+void CGameControllerGTrain::DelayHoverDoor(CCharacter *pChr)
+{
+	// A paused tee stays frozen, so its door must not open meanwhile.
+	if(m_DoorSwitch < 0 || m_aAttempts[pChr->GetPlayer()->GetCid()].m_DoorIndex < 0)
+		return;
+	SSwitchers &Switcher = GameServer()->Switchers()[m_DoorSwitch];
+	if(Switcher.m_aStatus[pChr->Team()] && Switcher.m_aType[pChr->Team()] == TILE_SWITCHTIMEDOPEN)
+		++Switcher.m_aEndTick[pChr->Team()];
 }
 
 void CGameControllerGTrain::OnCharacterSpawn(CCharacter *pChr)
@@ -769,7 +911,7 @@ void CGameControllerGTrain::UpdatePath(CCharacter *pChr)
 	CAttempt &Attempt = m_aAttempts[pChr->GetPlayer()->GetCid()];
 	if(!Attempt.m_pGoal || !Attempt.m_pGoal->m_Ready)
 		return;
-	const int Node = pChr->m_ZeroGravity ? Attempt.m_Start : PathNode(pChr->m_Pos);
+	const int Node = Attempt.m_StartTick < 0 ? Attempt.m_Start : PathNode(pChr->m_Pos);
 	if(Node == Attempt.m_RouteNode)
 		return;
 	if(Node < 0)
@@ -914,10 +1056,18 @@ void CGameControllerGTrain::Snap(int SnappingClient)
 		ClientId = pPlayer->SpectatorId();
 	if(ClientId < 0 || ClientId >= MAX_CLIENTS)
 		return;
+	CCharacter *pChr = GameServer()->GetPlayerChar(ClientId);
+	// Only the held player gets their door, as a short laser on its tile.
+	const CAttempt &Attempt = m_aAttempts[ClientId];
+	if(pChr && Attempt.m_DoorIndex >= 0 && Attempt.m_StartTick < 0 && m_aDoorSnapIds[ClientId] &&
+		GameServer()->Switchers()[m_DoorSwitch].m_aStatus[pChr->Team()])
+	{
+		const vec2 DoorPos = GameServer()->Collision()->GetPos(Attempt.m_DoorIndex);
+		const CSnapContext Context(GameServer()->GetClientVersion(SnappingClient), Server()->IsSixup(SnappingClient), SnappingClient);
+		GameServer()->SnapLaserObject(Context, *m_aDoorSnapIds[ClientId], DoorPos - vec2(12, 0), DoorPos + vec2(12, 0), -1, -1, LASERTYPE_DOOR, 0, m_DoorSwitch);
+	}
 	if(m_aSettings[m_aFightGroup[ClientId]].m_Freeplay)
 		return;
-	CCharacter *pChr = GameServer()->GetPlayerChar(ClientId);
-	const CAttempt &Attempt = m_aAttempts[ClientId];
 	if(!pChr || !Attempt.m_pGoal || !Attempt.m_pGoal->m_Ready || !m_FlagSnapId)
 		return;
 	const vec2 Goal = m_PathGraph.m_vNodes[Attempt.m_pGoal->m_Goal].m_Pos;
@@ -1033,7 +1183,10 @@ void CGameControllerGTrain::Tick()
 			if(m_aAttempts[ClientId].m_StartTick >= 0)
 				++m_aAttempts[ClientId].m_StartTick;
 			if(CCharacter *pChr = GameServer()->GetPlayerChar(ClientId))
+			{
 				KeepWeapons(pChr);
+				DelayHoverDoor(pChr);
+			}
 		}
 		return;
 	}
@@ -1064,6 +1217,7 @@ void CGameControllerGTrain::Tick()
 		{
 			if(m_aAttempts[ClientId].m_StartTick >= 0)
 				++m_aAttempts[ClientId].m_StartTick;
+			DelayHoverDoor(pChr);
 			continue;
 		}
 
@@ -1082,16 +1236,20 @@ void CGameControllerGTrain::Tick()
 		}
 		CAttempt &Attempt = m_aAttempts[ClientId];
 
+		// Standing on the door gives the double jump back, /nodj takes it.
+		if(Attempt.m_StartTick < 0 && Attempt.m_DoorIndex >= 0 && m_aSettings[m_aFightGroup[ClientId]].m_NoDoubleJump)
+			pChr->UseUpAirJumps();
 		// hover is over, let the player play again
-		if(pChr->m_ZeroGravity && pChr->m_FreezeTime == 0)
+		if(Attempt.m_StartTick < 0 && pChr->m_FreezeTime == 0)
 		{
-			pChr->SetZeroGravity(false);
+			if(pChr->m_ZeroGravity)
+				pChr->SetZeroGravity(false);
 			Attempt.m_StartTick = Server()->Tick();
 		}
 		if(m_aSettings[m_aFightGroup[ClientId]].m_Freeplay)
 			continue;
 		UpdatePath(pChr);
-		if(!pChr->m_ZeroGravity && Attempt.m_pGoal && Attempt.m_pGoal->m_Ready)
+		if(Attempt.m_StartTick >= 0 && Attempt.m_pGoal && Attempt.m_pGoal->m_Ready)
 			CheckGoal(pChr);
 	}
 }

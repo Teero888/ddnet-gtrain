@@ -4493,6 +4493,29 @@ void CGameContext::DeleteTempfile()
 
 bool CGameContext::OnMapChange(char *pNewMapName, int MapNameSize)
 {
+	if(!ImportMapSettings(pNewMapName, MapNameSize))
+		return false;
+	if(str_comp(g_Config.m_SvGametype, "gtrain") != 0)
+		return true;
+	char aSwitchMap[IO_MAX_PATH_LENGTH];
+	if(!CGameControllerGTrain::AddSwitchLayer(Storage(), pNewMapName, aSwitchMap, sizeof(aSwitchMap)))
+	{
+		// Without door collision, GTrain hovers fall back to zero gravity.
+		log_error("mapchange", "Failed to add a switch layer to '%s'", pNewMapName);
+		return true;
+	}
+	if(aSwitchMap[0])
+	{
+		DeleteTempfile();
+		log_info("mapchange", "Added a switch layer for GTrain hover doors into '%s'", aSwitchMap);
+		str_copy(pNewMapName, aSwitchMap, MapNameSize);
+		str_copy(m_aDeleteTempfile, aSwitchMap);
+	}
+	return true;
+}
+
+bool CGameContext::ImportMapSettings(char *pNewMapName, int MapNameSize)
+{
 	char aConfig[IO_MAX_PATH_LENGTH];
 	str_format(aConfig, sizeof(aConfig), "maps/%s.cfg", g_Config.m_SvMap);
 

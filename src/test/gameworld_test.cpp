@@ -6,6 +6,7 @@
 #include <engine/engine.h>
 #include <engine/http.h>
 #include <engine/kernel.h>
+#include <engine/map.h>
 #include <engine/server/databases/connection.h>
 #include <engine/server/databases/connection_pool.h>
 #include <engine/server/register.h>
@@ -13,11 +14,13 @@
 #include <engine/server/server_logger.h>
 #include <engine/shared/assertion_logger.h>
 #include <engine/shared/config.h>
+#include <engine/shared/datafile.h>
 #include <engine/shared/masterserver.h>
 
 #include <generated/protocol.h>
 #include <generated/server_data.h>
 
+#include <game/layers.h>
 #include <game/mapitems.h>
 #include <game/server/entities/character.h>
 #include <game/server/entities/laser.h>
@@ -217,6 +220,8 @@ public:
 		pCollision->SetCollisionAt(48, 80, TILE_START);
 		pCollision->SetCollisionAt((Width - 2) * 32 + 16, 80, TILE_FINISH);
 		g_Config.m_SvGtrainGoalDistance = 3;
+		// Most tests check the zero gravity hover, hover doors have their own.
+		g_Config.m_SvGtrainHoverDoor = 0;
 		g_Config.m_SvSoloServer = 1;
 		g_Config.m_SvTeam = SV_TEAM_FORCED_SOLO;
 		GameServer()->GlobalTuning()->Set("player_collision", 0);
@@ -313,6 +318,148 @@ TEST_F(GameWorld, DebugDummiesConnectAndDrop)
 
 	EXPECT_TRUE(m_pServer->ClientIngame(FirstDummy));
 	EXPECT_FALSE(m_pServer->ClientIngame(SecondDummy));
+}
+
+TEST_F(GameWorld, GTrainAddsSwitchLayerToServedMaps)
+{
+	char aPath[IO_MAX_PATH_LENGTH];
+	// Maps with a switch layer are served as they are.
+	ASSERT_TRUE(CGameControllerGTrain::AddSwitchLayer(m_pStorage.get(), "maps/coverage.map", aPath, sizeof(aPath)));
+	EXPECT_STREQ(aPath, "");
+
+	// Others get an empty one in a group of their own, the rest stays.
+	ASSERT_TRUE(CGameControllerGTrain::AddSwitchLayer(m_pStorage.get(), "maps/ctf1.map", aPath, sizeof(aPath)));
+	ASSERT_STRNE(aPath, "");
+	CDataFileReader Original, Modified;
+	ASSERT_TRUE(Original.Open(m_pStorage.get(), "maps/ctf1.map", IStorage::TYPE_ALL));
+	ASSERT_TRUE(Modified.Open(m_pStorage.get(), aPath, IStorage::TYPE_ALL));
+	EXPECT_EQ(Modified.NumItems(), Original.NumItems() + 2);
+	ASSERT_EQ(Modified.NumData(), Original.NumData() + 2);
+	for(int i = 0; i < Original.NumData(); ++i)
+	{
+		ASSERT_EQ(Modified.GetDataSize(i), Original.GetDataSize(i));
+		EXPECT_EQ(mem_comp(Modified.GetData(i), Original.GetData(i), Original.GetDataSize(i)), 0);
+	}
+	Original.Close();
+	Modified.Close();
+
+	std::unique_ptr<IMap> pMap = CreateMap();
+	ASSERT_TRUE(pMap->Load(m_pStorage.get(), aPath, IStorage::TYPE_ALL));
+	CLayers Layers;
+	Layers.Init(pMap.get(), false, false);
+	ASSERT_NE(Layers.GameLayer(), nullptr);
+	ASSERT_NE(Layers.SwitchLayer(), nullptr);
+	EXPECT_EQ(Layers.SwitchLayer()->m_Width, Layers.GameLayer()->m_Width);
+	EXPECT_EQ(Layers.SwitchLayer()->m_Height, Layers.GameLayer()->m_Height);
+	const int NumTiles = Layers.GameLayer()->m_Width * Layers.GameLayer()->m_Height;
+	ASSERT_EQ(pMap->GetDataSize(Layers.SwitchLayer()->m_Switch), NumTiles * (int)sizeof(CSwitchTile));
+	const auto *pSwitchTiles = static_cast<const CSwitchTile *>(pMap->GetData(Layers.SwitchLayer()->m_Switch));
+	for(int i = 0; i < NumTiles; ++i)
+		ASSERT_EQ(pSwitchTiles[i].m_Type, 0);
+	pMap->Unload();
+	EXPECT_TRUE(m_pStorage->RemoveFile(aPath, IStorage::TYPE_SAVE));
+}
+
+TEST_F(GameWorld, GTrainHoverDoorHoldsTheTeeUntilTheRelease)
+{
+	PrepareTrainingCorridor();
+	// The test map's speedups, switches, tunes, doors, draggers and turrets would interfere.
+	CCollision *pCollision = GameServer()->Collision();
+	CLayers *pLayers = GameServer()->Layers();
+	for(CMapItemLayerTilemap *pLayer : {pLayers->SpeedupLayer(), pLayers->SwitchLayer(), pLayers->TuneLayer()})
+	{
+		ASSERT_NE(pLayer, nullptr);
+		const int Data = pLayer == pLayers->SpeedupLayer() ? pLayer->m_Speedup : pLayer == pLayers->SwitchLayer() ? pLayer->m_Switch :
+															    pLayer->m_Tune;
+		mem_zero(pLayers->Map()->GetData(Data), pLayers->Map()->GetDataSize(Data));
+	}
+	for(int y = 0; y < pCollision->GetHeight(); ++y)
+		for(int x = 0; x < pCollision->GetWidth(); ++x)
+			pCollision->SetDoorCollisionAt(x * 32 + 16, y * 32 + 16, 0, 0, 0);
+	for(CEntity *pEntity = GameServer()->m_World.FindFirst(CGameWorld::ENTTYPE_LASER); pEntity; pEntity = pEntity->TypeNext())
+		pEntity->Reset();
+	g_Config.m_SvGtrainHoverDoor = 1;
+	m_pServer->AdvanceTicks(10); // switch end ticks are only sent after tick 0
+	const auto vIds = SpawnTrainingPlayers({"Runner", "Observer"});
+	const int Runner = vIds[0], Observer = vIds[1];
+	CCharacter *pChr = GameServer()->GetPlayerChar(Runner);
+
+	const auto Doors = [&](int ClientId) {
+		CSnapshotBuffer Buffer;
+		m_pServer->m_SnapshotBuilder.Init();
+		GameServer()->m_pController->Snap(ClientId);
+		m_pServer->m_SnapshotBuilder.Finish(&Buffer);
+		std::vector<CNetObj_DDNetLaser> vDoors;
+		const CSnapshot *pSnap = Buffer.AsSnapshot();
+		for(int i = 0; i < pSnap->NumItems(); ++i)
+			if(pSnap->GetItemType(i) == NETOBJTYPE_DDNETLASER && ((const CNetObj_DDNetLaser *)pSnap->GetItem(i)->Data())->m_Type == LASERTYPE_DOOR)
+				vDoors.push_back(*(const CNetObj_DDNetLaser *)pSnap->GetItem(i)->Data());
+		return vDoors;
+	};
+	const auto Release = [&](CCharacter *pTee) {
+		// The door holds the tee in place under normal gravity until its release.
+		const vec2 Start = pTee->m_Pos;
+		const int PlacementTick = m_pServer->Tick();
+		for(int i = 0; i < 49; ++i)
+		{
+			m_pServer->AdvanceTicks(1);
+			GameServer()->OnTick();
+			EXPECT_EQ(pTee->m_Pos, Start);
+		}
+		EXPECT_EQ(pTee->m_FreezeTime, 0);
+		EXPECT_EQ(m_pServer->Tick(), PlacementTick + 49);
+		m_pServer->AdvanceTicks(1);
+		GameServer()->OnTick();
+		EXPECT_GT(pTee->m_Pos.y, Start.y); // falling freely
+	};
+
+	// No tuning changes, so clients predict the hover like everything else.
+	EXPECT_FALSE(pChr->m_ZeroGravity);
+	EXPECT_FLOAT_EQ(m_pServer->m_aLastTuning[Runner]->m_Gravity, 0.5f);
+	// Every player gets only their own door, on the tile below their tee.
+	for(int ClientId : vIds)
+	{
+		const auto vDoors = Doors(ClientId);
+		ASSERT_EQ(vDoors.size(), 1u);
+		EXPECT_EQ(vec2(vDoors[0].m_ToX, vDoors[0].m_ToY), GameServer()->GetPlayerChar(ClientId)->m_Pos + vec2(-12, 32));
+		EXPECT_EQ(vDoors[0].m_Owner, -1);
+	}
+	const int DoorSwitch = Doors(Runner)[0].m_SwitchNumber;
+	EXPECT_GT(DoorSwitch, 0);
+	// Its switch tells the client when the door opens: on the last frozen tick.
+	{
+		CSnapshotBuffer Buffer;
+		m_pServer->m_SnapshotBuilder.Init();
+		GameServer()->SnapSwitchers(Runner);
+		m_pServer->m_SnapshotBuilder.Finish(&Buffer);
+		const CSnapshot *pSnap = Buffer.AsSnapshot();
+		const CNetObj_SwitchState *pState = nullptr;
+		for(int i = 0; i < pSnap->NumItems(); ++i)
+			if(pSnap->GetItemType(i) == NETOBJTYPE_SWITCHSTATE)
+				pState = (const CNetObj_SwitchState *)pSnap->GetItem(i)->Data();
+		ASSERT_NE(pState, nullptr);
+		EXPECT_GE(pState->m_HighestSwitchNumber, DoorSwitch);
+		EXPECT_TRUE((pState->m_aStatus[DoorSwitch / 32] >> (DoorSwitch % 32)) & 1);
+		EXPECT_EQ(pState->m_aSwitchNumbers[0], DoorSwitch);
+		EXPECT_EQ(pState->m_aEndTicks[0], m_pServer->Tick() + 49);
+	}
+	Release(pChr);
+	EXPECT_TRUE(Doors(Runner).empty());
+	EXPECT_FALSE(GameServer()->Switchers()[DoorSwitch].m_aStatus[pChr->Team()]);
+	EXPECT_FLOAT_EQ(m_pServer->m_aLastTuning[Runner]->m_Gravity, 0.5f);
+
+	// The door gives back the double jump, /nodj takes it again.
+	m_pServer->Console()->ExecuteLineFlag("nodj", CFGFLAG_CHAT, Runner);
+	m_pServer->Console()->ExecuteLineFlag("r", CFGFLAG_CHAT, Runner);
+	Release(pChr);
+	EXPECT_EQ(pChr->Core()->m_Jumped & 2, 2);
+
+	// Without room for a door the zero gravity hover remains.
+	auto *pFront = static_cast<CTile *>(pLayers->Map()->GetData(pLayers->FrontLayer()->m_Front));
+	pFront[pCollision->GetPureMapIndex(pChr->m_Pos) + pCollision->GetWidth()].m_Index = TILE_DEATH;
+	m_pServer->Console()->ExecuteLineFlag("r", CFGFLAG_CHAT, Runner);
+	EXPECT_TRUE(pChr->m_ZeroGravity);
+	EXPECT_TRUE(Doors(Runner).empty());
 }
 
 TEST_F(GameWorld, GTrainPersonalGoalTrailAndCollection)

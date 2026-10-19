@@ -273,6 +273,7 @@ public:
 
 	char m_aDeleteTempfile[128];
 	void DeleteTempfile();
+	bool ImportMapSettings(char *pNewMapName, int MapNameSize);
 
 	enum
 	{
