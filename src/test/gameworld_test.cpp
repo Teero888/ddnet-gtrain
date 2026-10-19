@@ -427,7 +427,7 @@ TEST_F(GameWorld, GTrainPersonalGoalTrailAndCollection)
 		CLogScope Scope(&CaptureLogger);
 		GameServer()->m_pController->Tick();
 	}
-	EXPECT_NE(CaptureLogger.ConcatenatedLines().find("captured the flag in 3.00 seconds."), std::string::npos);
+	EXPECT_NE(CaptureLogger.ConcatenatedLines().find("captured the flag in 3.00 seconds (0 fails)."), std::string::npos);
 	EXPECT_EQ(CaptureLogger.ConcatenatedLines().find("score"), std::string::npos);
 	EXPECT_TRUE(pFirst->m_ZeroGravity);
 	EXPECT_EQ(pFirst->m_FreezeTime, 50);
@@ -476,7 +476,7 @@ TEST_F(GameWorld, GTrainPersonalGoalTrailAndCollection)
 		CLogScope Scope(&NextCaptureLogger);
 		GameServer()->m_pController->Tick();
 	}
-	EXPECT_NE(NextCaptureLogger.ConcatenatedLines().find("captured the flag in 1.00 seconds."), std::string::npos);
+	EXPECT_NE(NextCaptureLogger.ConcatenatedLines().find("captured the flag in 1.00 seconds (0 fails)."), std::string::npos);
 }
 
 TEST_F(GameWorld, GTrainTeamAndPracticeCommandsPreserveFight)
@@ -853,7 +853,7 @@ TEST_F(GameWorld, GTrainRetryPreservesGoalAndRestartsTimer)
 		CLogScope Scope(&CaptureLogger);
 		GameServer()->m_pController->Tick();
 	}
-	EXPECT_NE(CaptureLogger.ConcatenatedLines().find("'Runner' captured the flag in 1.00 seconds."), std::string::npos);
+	EXPECT_NE(CaptureLogger.ConcatenatedLines().find("'Runner' captured the flag in 1.00 seconds (2 fails)."), std::string::npos);
 }
 
 TEST_F(GameWorld, GTrainRetryOnlyResetsRequestingFightMember)
@@ -1096,7 +1096,7 @@ TEST_F(GameWorld, GTrainFightChainingDeathAndCapture)
 		pController->Tick();
 	}
 	const std::string Messages = CaptureLogger.ConcatenatedLines();
-	EXPECT_NE(Messages.find("'Wilson' wins! Fight score:"), std::string::npos);
+	EXPECT_NE(Messages.find("'Wilson' captured the flag (0 fails). Fight score (first to 10):"), std::string::npos);
 	EXPECT_NE(Messages.find("'Wilson': 1"), std::string::npos);
 	EXPECT_NE(Messages.find("'Anna': 0"), std::string::npos);
 	EXPECT_NE(Messages.find("'Bob': 0"), std::string::npos);
@@ -1116,7 +1116,7 @@ TEST_F(GameWorld, GTrainFightChainingDeathAndCapture)
 		CLogScope Scope(&NextLogger);
 		pController->Tick();
 	}
-	EXPECT_NE(NextLogger.ConcatenatedLines().find("'Anna' wins! Fight score:"), std::string::npos);
+	EXPECT_NE(NextLogger.ConcatenatedLines().find("'Anna' captured the flag (0 fails). Fight score (first to 10):"), std::string::npos);
 	EXPECT_NE(NextLogger.ConcatenatedLines().find("'Anna': 1"), std::string::npos);
 	EXPECT_NE(NextLogger.ConcatenatedLines().find("'Wilson': 1"), std::string::npos);
 	EXPECT_EQ(NextLogger.ConcatenatedLines().find("seconds"), std::string::npos);
@@ -1160,7 +1160,7 @@ TEST_F(GameWorld, GTrainFightChainingDeathAndCapture)
 	EXPECT_NE(RejoinLogger.ConcatenatedLines().find("'Wilson': 0"), std::string::npos);
 	CheckSharedAttempt();
 
-	// Even if everyone else leaves, the remaining player's wins persist.
+	// Once everyone else leaves, the fight is over and its last score too.
 	pController->Fight(Bob, "");
 	pController->Fight(Wilson, "");
 	pController->Fight(Bob, "Anna");
@@ -1176,7 +1176,7 @@ TEST_F(GameWorld, GTrainFightChainingDeathAndCapture)
 		CLogScope Scope(&RemainingLogger);
 		pController->Tick();
 	}
-	EXPECT_NE(RemainingLogger.ConcatenatedLines().find("'Anna': 2"), std::string::npos);
+	EXPECT_NE(RemainingLogger.ConcatenatedLines().find("'Anna': 0"), std::string::npos);
 	EXPECT_NE(RemainingLogger.ConcatenatedLines().find("'Bob': 1"), std::string::npos);
 	EXPECT_EQ(RemainingLogger.ConcatenatedLines().find("'Wilson':"), std::string::npos);
 }
@@ -1610,6 +1610,354 @@ TEST_F(GameWorld, GTrainScoreboardWinsAndLeaderNamesKeepCanonicalServerNames)
 	EXPECT_EQ(aName[0], '*');
 	EXPECT_EQ(aName[str_length(aName) - 1], '*');
 	EXPECT_STREQ(m_pServer->ClientName(Anna), "Anna");
+}
+
+TEST_F(GameWorld, GTrainCaptureCountsFailsAtTheSamePosition)
+{
+	PrepareTrainingCorridor();
+	const auto vIds = SpawnTrainingPlayers({"Runner", "Anna", "Bob"});
+	const int Runner = vIds[0], Anna = vIds[1], Bob = vIds[2];
+	auto *pController = static_cast<CGameControllerGTrain *>(GameServer()->m_pController);
+	const auto Capture = [&](int ClientId) {
+		for(int Other : vIds)
+			if(CCharacter *pChr = GameServer()->GetPlayerChar(Other))
+				pChr->Unfreeze();
+		pController->Tick();
+		CCharacter *pChr = GameServer()->GetPlayerChar(ClientId);
+		pChr->m_Pos = pChr->m_PrevPos = TrainingGoal(ClientId);
+		pChr->SetPosition(pChr->m_Pos);
+		CMemoryLogger Logger;
+		{
+			CLogScope Scope(&Logger);
+			pController->Tick();
+		}
+		return Logger.ConcatenatedLines();
+	};
+
+	// Every retry of the same start and goal is a fail, also after dying.
+	const vec2 Goal = TrainingGoal(Runner);
+	m_pServer->Console()->ExecuteLineFlag("r", CFGFLAG_CHAT, Runner);
+	GameServer()->m_apPlayers[Runner]->KillCharacter(WEAPON_SELF);
+	m_pServer->Console()->ExecuteLineFlag("retry", CFGFLAG_CHAT, Runner);
+	pController->Tick();
+	EXPECT_EQ(TrainingGoal(Runner), Goal);
+	EXPECT_NE(Capture(Runner).find("'Runner' captured the flag in 0.00 seconds (2 fails)."), std::string::npos);
+	// The capture's new position starts without fails, as does a kill.
+	m_pServer->Console()->ExecuteLineFlag("r", CFGFLAG_CHAT, Runner);
+	EXPECT_NE(Capture(Runner).find("'Runner' captured the flag in 0.00 seconds (1 fail)."), std::string::npos);
+	m_pServer->Console()->ExecuteLineFlag("r", CFGFLAG_CHAT, Runner);
+	GameServer()->m_apPlayers[Runner]->KillCharacter(WEAPON_SELF);
+	GameServer()->m_apPlayers[Runner]->ForceSpawn(vec2(80, 80));
+	pController->Tick();
+	EXPECT_NE(Capture(Runner).find("'Runner' captured the flag in 0.00 seconds (0 fails)."), std::string::npos);
+
+	// Fight members respawning at their fight's position fail as well.
+	pController->Fight(Bob, "Anna");
+	pController->Tick();
+	GameServer()->m_apPlayers[Bob]->KillCharacter(WEAPON_SELF);
+	GameServer()->m_apPlayers[Bob]->ForceSpawn(vec2(80, 80));
+	pController->Tick();
+	m_pServer->Console()->ExecuteLineFlag("r", CFGFLAG_CHAT, Bob);
+	EXPECT_NE(Capture(Bob).find("'Bob' captured the flag (2 fails). Fight score (first to 10): 'Anna': 0, 'Bob': 1"), std::string::npos);
+	EXPECT_NE(Capture(Anna).find("'Anna' captured the flag (0 fails)."), std::string::npos);
+}
+
+TEST_F(GameWorld, GTrainRaceTimerRestartsWithEveryAttempt)
+{
+	PrepareTrainingCorridor();
+	const int Runner = SpawnTrainingPlayers({"Runner"})[0];
+	auto *pController = static_cast<CGameControllerGTrain *>(GameServer()->m_pController);
+	m_pServer->m_aClients[Runner].m_DDNetVersion = VERSION_DDNET_GAMETICK;
+	GameServer()->m_apPlayers[Runner]->m_TimerType = CPlayer::TIMERTYPE_GAMETIMER;
+	const auto SnappedStartTick = [&]() -> std::optional<int> {
+		CSnapshotBuffer Buffer;
+		m_pServer->m_SnapshotBuilder.Init();
+		pController->Snap(Runner);
+		m_pServer->m_SnapshotBuilder.Finish(&Buffer);
+		const CSnapshot *pSnap = Buffer.AsSnapshot();
+		for(int i = 0; i < pSnap->NumItems(); ++i)
+		{
+			if(pSnap->GetItemType(i) != NETOBJTYPE_GAMEINFO)
+				continue;
+			const auto *pInfo = (const CNetObj_GameInfo *)pSnap->GetItem(i)->Data();
+			if(pInfo->m_GameStateFlags & GAMESTATEFLAG_RACETIME)
+				return -pInfo->m_WarmupTimer;
+		}
+		return std::nullopt;
+	};
+
+	// The timer stays at zero while hovering, then counts the attempt.
+	EXPECT_EQ(SnappedStartTick(), m_pServer->Tick());
+	m_pServer->AdvanceTicks(20);
+	EXPECT_EQ(SnappedStartTick(), m_pServer->Tick());
+	CCharacter *pChr = GameServer()->GetPlayerChar(Runner);
+	pChr->Unfreeze();
+	pController->Tick();
+	const int StartTick = m_pServer->Tick();
+	m_pServer->AdvanceTicks(3 * m_pServer->TickSpeed());
+	EXPECT_EQ(SnappedStartTick(), StartTick);
+
+	// Retrying and killing both start the timer from zero again.
+	m_pServer->Console()->ExecuteLineFlag("r", CFGFLAG_CHAT, Runner);
+	EXPECT_EQ(SnappedStartTick(), m_pServer->Tick());
+	pChr->Unfreeze();
+	pController->Tick();
+	m_pServer->AdvanceTicks(m_pServer->TickSpeed());
+	EXPECT_EQ(pController->RaceTimerStartTick(pChr), m_pServer->Tick() - m_pServer->TickSpeed());
+	GameServer()->m_apPlayers[Runner]->KillCharacter(WEAPON_SELF);
+	pChr = GameServer()->m_apPlayers[Runner]->ForceSpawn(vec2(80, 80));
+	EXPECT_EQ(SnappedStartTick(), m_pServer->Tick()); // placement is still pending
+	pController->Tick();
+	EXPECT_EQ(SnappedStartTick(), m_pServer->Tick());
+	EXPECT_EQ(pChr->m_DDRaceState, ERaceState::CHEATED); // the finish line still never counts
+}
+
+TEST_F(GameWorld, GTrainGoalDistanceIsPersonalAndSetByFightLeaders)
+{
+	PrepareTrainingCorridor();
+	const auto vIds = SpawnTrainingPlayers({"Anna", "Bob"});
+	const int Anna = vIds[0], Bob = vIds[1];
+	auto *pController = static_cast<CGameControllerGTrain *>(GameServer()->m_pController);
+	const auto GoalDistance = [&](int ClientId) {
+		return distance(GameServer()->GetPlayerChar(ClientId)->m_Pos, TrainingGoal(ClientId)) / 32.0f;
+	};
+	const auto NewAttempt = [&](int ClientId) {
+		GameServer()->m_apPlayers[ClientId]->KillCharacter(WEAPON_SELF);
+		GameServer()->m_apPlayers[ClientId]->ForceSpawn(vec2(80, 80));
+		pController->Tick();
+	};
+	const auto Command = [&](int ClientId, const char *pCommand) {
+		m_pServer->m_avChatMessages[ClientId].clear();
+		m_pServer->Console()->ExecuteLineFlag(pCommand, CFGFLAG_CHAT, ClientId);
+		return m_pServer->m_avChatMessages[ClientId].empty() ? std::string() : m_pServer->m_avChatMessages[ClientId].back();
+	};
+
+	EXPECT_EQ(Command(Anna, "distance"), "Goal distance: 3 tiles (server default). Use /distance 1-500 to change it, 0 for the server default.");
+	for(const char *pInvalid : {"distance 501", "distance -1"})
+		EXPECT_EQ(Command(Anna, pInvalid), "The goal distance must be between 1 and 500 tiles, 0 for the server default.");
+
+	// Retries keep the current goal, new goals use the player's own distance.
+	const vec2 Goal = TrainingGoal(Anna);
+	EXPECT_EQ(Command(Anna, "distance 6"), "Goal distance set to 6 tiles for new goals.");
+	EXPECT_TRUE(m_pServer->m_avChatMessages[Bob].empty() || m_pServer->m_avChatMessages[Bob].back().find("Goal distance") == std::string::npos);
+	m_pServer->Console()->ExecuteLineFlag("r", CFGFLAG_CHAT, Anna);
+	EXPECT_EQ(TrainingGoal(Anna), Goal);
+	NewAttempt(Anna);
+	EXPECT_FLOAT_EQ(GoalDistance(Anna), 6.0f);
+	NewAttempt(Bob);
+	EXPECT_FLOAT_EQ(GoalDistance(Bob), 3.0f);
+	EXPECT_EQ(Command(Anna, "distance"), "Goal distance: 6 tiles. Use /distance 1-500 to change it, 0 for the server default.");
+
+	// In a fight, the leader's distance applies to everyone.
+	pController->Fight(Bob, "Anna");
+	pController->Tick();
+	EXPECT_EQ(Command(Bob, "distance 4"), "Only the fight leader can change the goal distance.");
+	EXPECT_EQ(Command(Bob, "distance"), "Goal distance: 6 tiles. Use /distance 1-500 to change it, 0 for the server default.");
+	m_pServer->m_avChatMessages[Bob].clear();
+	EXPECT_EQ(Command(Anna, "distance 4"), "Goal distance set to 4 tiles for new goals.");
+	ASSERT_FALSE(m_pServer->m_avChatMessages[Bob].empty());
+	EXPECT_EQ(m_pServer->m_avChatMessages[Bob].back(), "Goal distance set to 4 tiles for new goals.");
+	NewAttempt(Anna);
+	for(int ClientId : vIds)
+	{
+		EXPECT_FLOAT_EQ(GoalDistance(ClientId), 4.0f);
+		EXPECT_EQ(TrainingGoal(ClientId), TrainingGoal(Anna));
+	}
+	EXPECT_EQ(Command(Anna, "distance 0"), "Goal distance set to 3 tiles (server default) for new goals.");
+}
+
+TEST_F(GameWorld, GTrainNoDoubleJumpStartsAttemptsWithoutAirJump)
+{
+	PrepareTrainingCorridor();
+	const auto vIds = SpawnTrainingPlayers({"Anna", "Bob"});
+	const int Anna = vIds[0], Bob = vIds[1];
+	auto *pController = static_cast<CGameControllerGTrain *>(GameServer()->m_pController);
+	const auto Command = [&](int ClientId, const char *pCommand) {
+		m_pServer->m_avChatMessages[ClientId].clear();
+		m_pServer->Console()->ExecuteLineFlag(pCommand, CFGFLAG_CHAT, ClientId);
+		return m_pServer->m_avChatMessages[ClientId].empty() ? std::string() : m_pServer->m_avChatMessages[ClientId].back();
+	};
+	CCharacter *pChr = GameServer()->GetPlayerChar(Anna);
+	EXPECT_EQ(Command(Anna, "nodj"), "Attempts now start without double jump. Touching the ground gives it back.");
+	EXPECT_EQ(pChr->Core()->m_Jumped, 0); // the current attempt keeps it
+	m_pServer->Console()->ExecuteLineFlag("r", CFGFLAG_CHAT, Anna);
+	EXPECT_EQ(pChr->Core()->m_Jumped, 2);
+	EXPECT_EQ(pChr->Core()->m_JumpedTotal, pChr->Core()->m_Jumps - 1);
+
+	// The feet stay dark in the air, touching the ground lights them again.
+	GameServer()->m_World.Tick();
+	EXPECT_EQ(pChr->Core()->m_Jumped & 2, 2);
+	GameServer()->Collision()->SetCollisionAt(pChr->m_Pos.x, pChr->m_Pos.y + 32, TILE_SOLID);
+	GameServer()->m_World.Tick();
+	EXPECT_EQ(pChr->Core()->m_Jumped & 2, 0);
+
+	// Fight members start attempts with their leader's setting.
+	pController->Fight(Bob, "Anna");
+	pController->Tick();
+	EXPECT_EQ(GameServer()->GetPlayerChar(Bob)->Core()->m_Jumped, 2);
+	EXPECT_EQ(Command(Bob, "nodj"), "Only the fight leader can toggle /nodj.");
+	EXPECT_EQ(Command(Anna, "nodj"), "Attempts now start with double jump.");
+	EXPECT_EQ(m_pServer->m_avChatMessages[Bob].back(), "Attempts now start with double jump.");
+	m_pServer->Console()->ExecuteLineFlag("r", CFGFLAG_CHAT, Bob);
+	EXPECT_EQ(GameServer()->GetPlayerChar(Bob)->Core()->m_Jumped, 0);
+}
+
+TEST_F(GameWorld, GTrainScoreLimitEndsTheFight)
+{
+	PrepareTrainingCorridor();
+	const auto vIds = SpawnTrainingPlayers({"Anna", "Bob"});
+	const int Anna = vIds[0], Bob = vIds[1];
+	auto *pController = static_cast<CGameControllerGTrain *>(GameServer()->m_pController);
+	pController->Fight(Bob, "Anna");
+	pController->Tick();
+	const auto Command = [&](int ClientId, const char *pCommand) {
+		m_pServer->m_avChatMessages[ClientId].clear();
+		m_pServer->Console()->ExecuteLineFlag(pCommand, CFGFLAG_CHAT, ClientId);
+		return m_pServer->m_avChatMessages[ClientId].empty() ? std::string() : m_pServer->m_avChatMessages[ClientId].back();
+	};
+	const auto Capture = [&](int ClientId) {
+		for(int Other : vIds)
+			GameServer()->GetPlayerChar(Other)->Unfreeze();
+		pController->Tick();
+		CCharacter *pChr = GameServer()->GetPlayerChar(ClientId);
+		pChr->m_Pos = pChr->m_PrevPos = TrainingGoal(ClientId);
+		pChr->SetPosition(pChr->m_Pos);
+		CMemoryLogger Logger;
+		{
+			CLogScope Scope(&Logger);
+			pController->Tick();
+		}
+		return Logger.ConcatenatedLines();
+	};
+	const auto Score = [&](int ClientId) { return pController->SnapPlayerScore(ClientId, GameServer()->m_apPlayers[ClientId]); };
+
+	EXPECT_EQ(Command(Bob, "scorelimit"), "Fight score limit: 10. Use /scorelimit 1-1000 to change it, 0 for no limit.");
+	EXPECT_EQ(Command(Bob, "scorelimit 2"), "Only the fight leader can change the score limit.");
+	EXPECT_EQ(Command(Anna, "scorelimit 1001"), "The score limit must be between 1 and 1000, 0 for no limit.");
+	EXPECT_EQ(Command(Anna, "scorelimit 2"), "The first to 2 points wins the fight.");
+	EXPECT_EQ(m_pServer->m_avChatMessages[Bob].back(), "The first to 2 points wins the fight.");
+
+	EXPECT_EQ(Capture(Bob).find("won the fight"), std::string::npos);
+	EXPECT_EQ(Capture(Anna).find("won the fight"), std::string::npos);
+	const std::string Messages = Capture(Bob);
+	EXPECT_NE(Messages.find("'Bob' captured the flag (0 fails). Fight score (first to 2): 'Anna': 1, 'Bob': 2"), std::string::npos);
+	EXPECT_NE(Messages.find("'Bob' won the fight with 2 points! The fight score starts over."), std::string::npos);
+	for(int ClientId : vIds)
+	{
+		EXPECT_EQ(Score(ClientId), 0);
+		EXPECT_EQ(m_pServer->m_aClients[ClientId].m_Score, 0);
+	}
+
+	// Without a limit, captures only add up.
+	EXPECT_EQ(Command(Anna, "scorelimit 0"), "The fight score limit is disabled.");
+	EXPECT_EQ(Command(Bob, "scorelimit"), "Fight score limit: none. Use /scorelimit 1-1000 to change it, 0 for no limit.");
+	for(int i = 0; i < 2; ++i)
+		EXPECT_EQ(Capture(Bob).find("won the fight"), std::string::npos);
+	EXPECT_NE(Capture(Bob).find("Fight score: 'Anna': 0, 'Bob': 3"), std::string::npos);
+
+	// Leaving ends the fight's score for both, rejoining starts from zero.
+	pController->Fight(Bob, "");
+	pController->Tick();
+	EXPECT_EQ(Score(Bob), 0);
+	pController->Fight(Bob, "Anna");
+	pController->Tick();
+	EXPECT_EQ(Score(Bob), 0);
+	EXPECT_NE(Capture(Anna).find("'Anna': 1, 'Bob': 0"), std::string::npos);
+}
+
+TEST_F(GameWorld, GTrainHelpListsOnlyGTrainCommands)
+{
+	PrepareTrainingCorridor();
+	g_Config.m_SvSpamprotection = 0;
+	const int Runner = SpawnTrainingPlayers({"Runner"})[0];
+	m_pServer->m_avChatMessages[Runner].clear();
+	Say(Runner, "/help");
+	const auto &vMessages = m_pServer->m_avChatMessages[Runner];
+	ASSERT_EQ(vMessages.size(), 10);
+	EXPECT_EQ(vMessages.front(), "GTrain commands:");
+	std::string Help;
+	for(const auto &Message : vMessages)
+		Help += Message + "\n";
+	for(const char *pCommand : {"Kill:", "/r ", "/retry", "/fight", "/distance", "/nodj", "/scorelimit", "/shotgun", "/grenade", "/laser", "/ninja", "/freeplay"})
+		EXPECT_NE(Help.find(pCommand), std::string::npos) << pCommand;
+	for(const char *pOther : {"/cmdlist", "/practice", "/team", "/settings", "/rescue"})
+		EXPECT_EQ(Help.find(pOther), std::string::npos) << pOther;
+
+	// Help for a single command still shows its usage.
+	m_pServer->m_avChatMessages[Runner].clear();
+	Say(Runner, "/help distance");
+	ASSERT_FALSE(vMessages.empty());
+	EXPECT_EQ(vMessages.front(), "Usage: distance ?i[tiles]");
+}
+
+TEST_F(GameWorld, GTrainWeaponCommandsKeepWeaponsAndFollowTheFight)
+{
+	PrepareTrainingCorridor();
+	const auto vIds = SpawnTrainingPlayers({"Anna", "Bob", "Wilson"});
+	const int Anna = vIds[0], Bob = vIds[1], Wilson = vIds[2];
+	auto *pController = static_cast<CGameControllerGTrain *>(GameServer()->m_pController);
+	const auto Command = [&](int ClientId, const char *pCommand) {
+		m_pServer->m_avChatMessages[ClientId].clear();
+		m_pServer->Console()->ExecuteLineFlag(pCommand, CFGFLAG_CHAT, ClientId);
+		return m_pServer->m_avChatMessages[ClientId].empty() ? std::string() : m_pServer->m_avChatMessages[ClientId].back();
+	};
+	const auto HasWeapon = [&](int ClientId, int Weapon) {
+		return GameServer()->GetPlayerChar(ClientId)->Core()->m_aWeapons[Weapon].m_Got;
+	};
+
+	EXPECT_EQ(Command(Anna, "shotgun"), "You keep the shotgun in every attempt until /shotgun is used again.");
+	EXPECT_TRUE(HasWeapon(Anna, WEAPON_SHOTGUN));
+	EXPECT_FALSE(HasWeapon(Bob, WEAPON_SHOTGUN));
+	GameServer()->m_apPlayers[Anna]->KillCharacter(WEAPON_SELF);
+	GameServer()->m_apPlayers[Anna]->ForceSpawn(vec2(80, 80));
+	pController->Tick();
+	EXPECT_TRUE(HasWeapon(Anna, WEAPON_SHOTGUN)); // new attempts keep it
+
+	// Ninja does not run out.
+	Command(Anna, "ninja");
+	EXPECT_TRUE(HasWeapon(Anna, WEAPON_NINJA));
+	m_pServer->AdvanceTicks(20 * m_pServer->TickSpeed());
+	pController->Tick();
+	EXPECT_EQ(GameServer()->GetPlayerChar(Anna)->Core()->m_Ninja.m_ActivationTick, m_pServer->Tick());
+	EXPECT_EQ(Command(Anna, "shotgun"), "The shotgun was removed.");
+	EXPECT_FALSE(HasWeapon(Anna, WEAPON_SHOTGUN));
+
+	// Joiners get the fight's weapons and lose the ones it does not have.
+	Command(Wilson, "grenade");
+	EXPECT_TRUE(HasWeapon(Wilson, WEAPON_GRENADE));
+	pController->Fight(Bob, "Anna");
+	pController->Fight(Wilson, "Anna");
+	pController->Tick();
+	for(int ClientId : {Bob, Wilson})
+		EXPECT_TRUE(HasWeapon(ClientId, WEAPON_NINJA));
+	EXPECT_FALSE(HasWeapon(Wilson, WEAPON_GRENADE));
+	EXPECT_EQ(Command(Bob, "laser"), "Only the fight leader can toggle /laser.");
+	EXPECT_FALSE(HasWeapon(Bob, WEAPON_LASER));
+	EXPECT_EQ(Command(Anna, "rifle"), "You keep the laser in every attempt until /laser is used again.");
+	for(int ClientId : vIds)
+		EXPECT_TRUE(HasWeapon(ClientId, WEAPON_LASER));
+
+	// Leavers keep their fight's weapons.
+	pController->Fight(Bob, "");
+	pController->Tick();
+	EXPECT_TRUE(HasWeapon(Bob, WEAPON_LASER));
+	EXPECT_TRUE(HasWeapon(Bob, WEAPON_NINJA));
+	EXPECT_EQ(Command(Bob, "ninja"), "The ninja was removed.");
+	EXPECT_FALSE(HasWeapon(Bob, WEAPON_NINJA));
+	EXPECT_TRUE(HasWeapon(Wilson, WEAPON_NINJA));
+}
+
+TEST_F(GameWorld, WeaponChatCommandsStillRequirePracticeOutsideGTrain)
+{
+	g_Config.m_DbgDummies = 1;
+	m_pServer->UpdateDebugDummies(false);
+	const int ClientId = m_pServer->MaxClients() - 1;
+	CCharacter *pChr = GameServer()->m_apPlayers[ClientId]->ForceSpawn(vec2(80, 80));
+	m_pServer->m_avChatMessages[ClientId].clear();
+	m_pServer->Console()->ExecuteLineFlag("shotgun", CFGFLAG_CHAT, ClientId);
+	EXPECT_FALSE(pChr->Core()->m_aWeapons[WEAPON_SHOTGUN].m_Got);
+	ASSERT_FALSE(m_pServer->m_avChatMessages[ClientId].empty());
+	EXPECT_NE(m_pServer->m_avChatMessages[ClientId].back().find("/practice"), std::string::npos);
 }
 
 TEST_F(GameWorld, ClosestCharacter)

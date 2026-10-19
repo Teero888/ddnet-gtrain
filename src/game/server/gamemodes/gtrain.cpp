@@ -266,36 +266,42 @@ void CGameControllerGTrain::PlaceRandomly(CCharacter *pChr)
 	if(Attempt.m_pGoal.use_count() != 1)
 		Attempt.m_pGoal = std::make_shared<CGTrainGoal>();
 	const int Start = PathNode(Pos);
-	const int TargetDistance = g_Config.m_SvGtrainGoalDistance;
-	if(m_aFreeplay[ClientId])
+	const int Group = m_aFightGroup[ClientId];
+	const int TargetDistance = GoalDistance(Group);
+	if(m_aSettings[Group].m_Freeplay)
 		*Attempt.m_pGoal = CGTrainGoal();
 	else
 		m_Pathfinder.Build(*Attempt.m_pGoal, Start, TargetDistance, secure_rand_below(1 << 30));
-	PlaceForAttempt(pChr, Attempt.m_pGoal, Start, TargetDistance);
+	PlaceForAttempt(pChr, Attempt.m_pGoal, Start, TargetDistance, false);
 }
 
-void CGameControllerGTrain::PlaceForAttempt(CCharacter *pChr, const std::shared_ptr<CGTrainGoal> &pGoal, int Start, int TargetDistance)
+void CGameControllerGTrain::PlaceForAttempt(CCharacter *pChr, const std::shared_ptr<CGTrainGoal> &pGoal, int Start, int TargetDistance, bool Retry)
 {
 	const int ClientId = pChr->GetPlayer()->GetCid();
+	const CSettings &Settings = m_aSettings[m_aFightGroup[ClientId]];
 	m_aPendingPlace[ClientId] = false;
 	CAttempt &Attempt = m_aAttempts[ClientId];
+	// Goals are rebuilt in place, so a matching goal and start is not enough:
+	// only retries count as fails.
+	Attempt.m_Fails = Retry && Attempt.m_pGoal == pGoal && Attempt.m_Start == Start ? Attempt.m_Fails + 1 : 0;
 	Attempt.m_pGoal = pGoal;
 	Attempt.m_Start = Start;
 	Attempt.m_TargetDistance = TargetDistance;
 	Attempt.m_StartTick = -1;
-	if(m_aFreeplay[m_aFightGroup[ClientId]])
+	if(Settings.m_Freeplay)
 		Attempt.m_vRoute.clear();
 	else
 		Attempt.m_vRoute = pGoal->m_vInitialRoute;
 	Attempt.m_RouteIndex = 0;
 	Attempt.m_RouteNode = Start;
-	Attempt.m_LastPathTick = -1;
 	const vec2 Pos = m_PathGraph.m_vNodes[Start].m_Pos;
 	pChr->SetDeepFrozen(false);
 	pChr->SetLiveFrozen(false);
 	pChr->Unfreeze();
 	pChr->ResetHook();
 	pChr->ResetJumps();
+	if(Settings.m_NoDoubleJump)
+		pChr->UseUpAirJumps();
 	pChr->ResetVelocity();
 	pChr->SetPosition(Pos);
 	pChr->m_Pos = Pos;
@@ -323,6 +329,37 @@ int CGameControllerGTrain::FightSize(int Group) const
 		if(m_aFightGroup[ClientId] == Group && GameServer()->m_apPlayers[ClientId])
 			++Size;
 	return Size;
+}
+
+int CGameControllerGTrain::GoalDistance(int Group) const
+{
+	return m_aSettings[Group].m_GoalDistance ? m_aSettings[Group].m_GoalDistance : g_Config.m_SvGtrainGoalDistance;
+}
+
+bool CGameControllerGTrain::CheckFightLeader(int ClientId, const char *pAction)
+{
+	if(m_aFightGroup[ClientId] == ClientId)
+		return true;
+	char aMessage[128];
+	str_format(aMessage, sizeof(aMessage), "Only the fight leader can %s.", pAction);
+	GameServer()->SendChatTarget(ClientId, aMessage);
+	return false;
+}
+
+void CGameControllerGTrain::SendFightChat(int Group, const char *pMessage)
+{
+	for(int ClientId = 0; ClientId < MAX_CLIENTS; ++ClientId)
+		if(m_aFightGroup[ClientId] == Group && GameServer()->m_apPlayers[ClientId])
+			GameServer()->SendChatTarget(ClientId, pMessage);
+}
+
+void CGameControllerGTrain::KeepWeapons(CCharacter *pChr)
+{
+	// Giving them every tick also keeps ninja from running out.
+	const int Weapons = m_aSettings[m_aFightGroup[pChr->GetPlayer()->GetCid()]].m_Weapons;
+	for(int Weapon = WEAPON_SHOTGUN; Weapon <= WEAPON_NINJA; ++Weapon)
+		if(Weapons & (1 << Weapon))
+			pChr->GiveWeapon(Weapon);
 }
 
 int CGameControllerGTrain::SnapPlayerScore(int SnappingClient, CPlayer *pPlayer)
@@ -373,13 +410,13 @@ void CGameControllerGTrain::RestartFight(int Group)
 		return;
 	const int Start = PathNode(m_vTrainPositions[secure_rand_below(m_vTrainPositions.size())]);
 	const vec2 Pos = m_PathGraph.m_vNodes[Start].m_Pos;
-	const int TargetDistance = g_Config.m_SvGtrainGoalDistance;
+	const int TargetDistance = GoalDistance(Group);
 	// All owners of this goal belong to the resetting group. Build it once,
 	// then share it while keeping timers local to each player.
 	auto pGoal = m_aAttempts[Group].m_pGoal;
 	if(!pGoal)
 		pGoal = std::make_shared<CGTrainGoal>();
-	if(m_aFreeplay[Group])
+	if(m_aSettings[Group].m_Freeplay)
 		*pGoal = CGTrainGoal();
 	else
 		m_Pathfinder.Build(*pGoal, Start, TargetDistance, secure_rand_below(1 << 30));
@@ -397,7 +434,7 @@ void CGameControllerGTrain::RestartFight(int Group)
 			pChr = pPlayer->ForceSpawn(Pos);
 			pChr->SetSolo(true);
 		}
-		PlaceForAttempt(pChr, pGoal, Start, TargetDistance);
+		PlaceForAttempt(pChr, pGoal, Start, TargetDistance, false);
 	}
 	m_SyncFightDeaths = false;
 }
@@ -411,7 +448,7 @@ bool CGameControllerGTrain::LeaveFight(int ClientId, bool NewAttempt)
 		return false;
 	}
 	const bool Restart = m_aFightRestart[Group];
-	const bool Freeplay = m_aFreeplay[Group];
+	const CSettings Settings = m_aSettings[Group];
 	const int ScoreboardTeam = m_aFightTeam[Group];
 	m_aFightRestart[Group] = false;
 	m_aFightTeam[Group] = 0;
@@ -430,12 +467,15 @@ bool CGameControllerGTrain::LeaveFight(int ClientId, bool NewAttempt)
 				m_aFightGroup[Other] = RemainingGroup;
 		m_aFightRestart[RemainingGroup] = Restart;
 		m_aFightTeam[RemainingGroup] = ScoreboardTeam;
-		m_aFreeplay[RemainingGroup] = Freeplay;
+		m_aSettings[RemainingGroup] = Settings;
 	}
 	m_aFightGroup[ClientId] = ClientId;
 	m_aFightRestart[ClientId] = false;
 	m_aFightWins[ClientId] = 0;
-	m_aFreeplay[ClientId] = Freeplay;
+	m_aSettings[ClientId] = Settings;
+	// A fight ends when only one player is left, so does their score.
+	if(RemainingGroup >= 0 && FightSize(RemainingGroup) <= 1)
+		m_aFightWins[RemainingGroup] = 0;
 	m_aAttempts[ClientId].m_pGoal.reset();
 	if(NewAttempt)
 		m_aPendingPlace[ClientId] = true;
@@ -487,26 +527,28 @@ void CGameControllerGTrain::Fight(int ClientId, const char *pName)
 	// group keeps its positions. Dead joiners are placed there on respawn.
 	const CAttempt &TargetAttempt = m_aAttempts[TargetGroup];
 	const bool JoinAttempt = TargetAttempt.m_pGoal && TargetAttempt.m_Start >= 0;
+	// Joiners adopt the target group's settings, losing weapons it lacks.
+	const int RemovedWeapons = m_aSettings[SourceGroup].m_Weapons & ~m_aSettings[TargetGroup].m_Weapons;
 	for(int Other = 0; Other < MAX_CLIENTS; ++Other)
 	{
 		if(m_aFightGroup[Other] != SourceGroup)
 			continue;
 		m_aFightGroup[Other] = TargetGroup;
 		CCharacter *pChr = GameServer()->GetPlayerChar(Other);
+		for(int Weapon = WEAPON_SHOTGUN; pChr && Weapon <= WEAPON_NINJA; ++Weapon)
+			if((RemovedWeapons & (1 << Weapon)) && pChr->GetWeaponGot(Weapon))
+				pChr->GiveWeapon(Weapon, true);
 		if(JoinAttempt && pChr)
-			PlaceForAttempt(pChr, TargetAttempt.m_pGoal, TargetAttempt.m_Start, TargetAttempt.m_TargetDistance);
+			PlaceForAttempt(pChr, TargetAttempt.m_pGoal, TargetAttempt.m_Start, TargetAttempt.m_TargetDistance, false);
 	}
 	m_aFightRestart[SourceGroup] = false;
-	m_aFreeplay[SourceGroup] = false;
 	if(!JoinAttempt)
 		m_aFightRestart[TargetGroup] = true;
 	UpdateFightTeams();
 	char aMessage[160];
 	str_format(aMessage, sizeof(aMessage), "'%s' joined the fight with '%s'. Use /fight to leave.",
 		Server()->ClientName(ClientId), Server()->ClientName(Target));
-	for(int Other = 0; Other < MAX_CLIENTS; ++Other)
-		if(m_aFightGroup[Other] == TargetGroup && GameServer()->m_apPlayers[Other])
-			GameServer()->SendChatTarget(Other, aMessage);
+	SendFightChat(TargetGroup, aMessage);
 }
 
 void CGameControllerGTrain::Freeplay(int ClientId)
@@ -515,26 +557,20 @@ void CGameControllerGTrain::Freeplay(int ClientId)
 	if(!pPlayer)
 		return;
 	const int Group = m_aFightGroup[ClientId];
-	if(ClientId != Group)
-	{
-		GameServer()->SendChatTarget(ClientId, "Only the fight leader can toggle freeplay.");
+	if(!CheckFightLeader(ClientId, "toggle freeplay"))
 		return;
-	}
 	if(pPlayer->GetTeam() == TEAM_SPECTATORS || pPlayer->IsPaused())
 	{
 		GameServer()->SendChatTarget(ClientId, "You must be playing and unpaused to toggle freeplay.");
 		return;
 	}
-	m_aFreeplay[Group] = !m_aFreeplay[Group];
+	bool &Freeplay = m_aSettings[Group].m_Freeplay;
+	Freeplay = !Freeplay;
 	for(int Other = 0; Other < MAX_CLIENTS; ++Other)
-	{
-		if(m_aFightGroup[Other] != Group || !GameServer()->m_apPlayers[Other])
-			continue;
-		if(m_aFreeplay[Group])
+		if(Freeplay && m_aFightGroup[Other] == Group)
 			m_aAttempts[Other].m_vRoute.clear();
-		GameServer()->SendChatTarget(Other, m_aFreeplay[Group] ? "Freeplay enabled. Flags and paths are hidden; captures are disabled." : "Freeplay disabled. Starting a new training attempt.");
-	}
-	if(!m_aFreeplay[Group])
+	SendFightChat(Group, Freeplay ? "Freeplay enabled. Flags and paths are hidden; captures are disabled." : "Freeplay disabled. Starting a new training attempt.");
+	if(!Freeplay)
 	{
 		if(FightSize(Group) > 1)
 			RestartFight(Group);
@@ -573,7 +609,124 @@ void CGameControllerGTrain::Retry(int ClientId)
 		pChr = pPlayer->ForceSpawn(m_PathGraph.m_vNodes[Attempt.m_Start].m_Pos);
 		pChr->SetSolo(true);
 	}
-	PlaceForAttempt(pChr, Attempt.m_pGoal, Attempt.m_Start, Attempt.m_TargetDistance);
+	PlaceForAttempt(pChr, Attempt.m_pGoal, Attempt.m_Start, Attempt.m_TargetDistance, true);
+}
+
+void CGameControllerGTrain::Distance(int ClientId, std::optional<int> Tiles)
+{
+	if(!GameServer()->m_apPlayers[ClientId])
+		return;
+	const int Group = m_aFightGroup[ClientId];
+	char aMessage[160];
+	if(!Tiles)
+	{
+		str_format(aMessage, sizeof(aMessage), "Goal distance: %d tiles%s. Use /distance 1-%d to change it, 0 for the server default.",
+			GoalDistance(Group), m_aSettings[Group].m_GoalDistance ? "" : " (server default)", (int)MAX_GOAL_DISTANCE);
+		GameServer()->SendChatTarget(ClientId, aMessage);
+		return;
+	}
+	if(!CheckFightLeader(ClientId, "change the goal distance"))
+		return;
+	if(*Tiles < 0 || *Tiles > MAX_GOAL_DISTANCE)
+	{
+		str_format(aMessage, sizeof(aMessage), "The goal distance must be between 1 and %d tiles, 0 for the server default.", (int)MAX_GOAL_DISTANCE);
+		GameServer()->SendChatTarget(ClientId, aMessage);
+		return;
+	}
+	// The current goal stays, so retries keep their distance.
+	m_aSettings[Group].m_GoalDistance = *Tiles;
+	str_format(aMessage, sizeof(aMessage), "Goal distance set to %d tiles%s for new goals.", GoalDistance(Group), *Tiles ? "" : " (server default)");
+	SendFightChat(Group, aMessage);
+}
+
+void CGameControllerGTrain::NoDoubleJump(int ClientId)
+{
+	if(!GameServer()->m_apPlayers[ClientId] || !CheckFightLeader(ClientId, "toggle /nodj"))
+		return;
+	bool &NoDoubleJump = m_aSettings[ClientId].m_NoDoubleJump;
+	NoDoubleJump = !NoDoubleJump;
+	SendFightChat(ClientId, NoDoubleJump ? "Attempts now start without double jump. Touching the ground gives it back." : "Attempts now start with double jump.");
+}
+
+void CGameControllerGTrain::ScoreLimit(int ClientId, std::optional<int> Limit)
+{
+	if(!GameServer()->m_apPlayers[ClientId])
+		return;
+	const int Group = m_aFightGroup[ClientId];
+	char aMessage[160];
+	if(!Limit)
+	{
+		char aLimit[16] = "none";
+		if(m_aSettings[Group].m_ScoreLimit > 0)
+			str_format(aLimit, sizeof(aLimit), "%d", m_aSettings[Group].m_ScoreLimit);
+		str_format(aMessage, sizeof(aMessage), "Fight score limit: %s. Use /scorelimit 1-%d to change it, 0 for no limit.", aLimit, (int)MAX_SCORE_LIMIT);
+		GameServer()->SendChatTarget(ClientId, aMessage);
+		return;
+	}
+	if(!CheckFightLeader(ClientId, "change the score limit"))
+		return;
+	if(*Limit < 0 || *Limit > MAX_SCORE_LIMIT)
+	{
+		str_format(aMessage, sizeof(aMessage), "The score limit must be between 1 and %d, 0 for no limit.", (int)MAX_SCORE_LIMIT);
+		GameServer()->SendChatTarget(ClientId, aMessage);
+		return;
+	}
+	m_aSettings[Group].m_ScoreLimit = *Limit;
+	if(*Limit > 0)
+		str_format(aMessage, sizeof(aMessage), "The first to %d points wins the fight.", *Limit);
+	else
+		str_copy(aMessage, "The fight score limit is disabled.");
+	SendFightChat(Group, aMessage);
+}
+
+void CGameControllerGTrain::ToggleWeapon(int ClientId, int Weapon)
+{
+	static const char *const s_apNames[NUM_WEAPONS] = {"hammer", "gun", "shotgun", "grenade", "laser", "ninja"};
+	const char *pName = s_apNames[Weapon];
+	char aMessage[128];
+	str_format(aMessage, sizeof(aMessage), "toggle /%s", pName);
+	if(!GameServer()->m_apPlayers[ClientId] || !CheckFightLeader(ClientId, aMessage))
+		return;
+	int &Weapons = m_aSettings[ClientId].m_Weapons;
+	Weapons ^= 1 << Weapon;
+	const bool Enabled = Weapons & (1 << Weapon);
+	for(int Other = 0; Other < MAX_CLIENTS; ++Other)
+	{
+		CCharacter *pChr = GameServer()->GetPlayerChar(Other);
+		if(m_aFightGroup[Other] == ClientId && pChr && pChr->GetWeaponGot(Weapon) != Enabled)
+			pChr->GiveWeapon(Weapon, !Enabled);
+	}
+	if(Enabled)
+		str_format(aMessage, sizeof(aMessage), "You keep the %s in every attempt until /%s is used again.", pName, pName);
+	else
+		str_format(aMessage, sizeof(aMessage), "The %s was removed.", pName);
+	SendFightChat(ClientId, aMessage);
+}
+
+void CGameControllerGTrain::Help()
+{
+	log_info("chatresp", "GTrain commands:");
+	log_info("chatresp", "Kill: new position and flag");
+	log_info("chatresp", "/r or /retry: retry the current position and flag");
+	log_info("chatresp", "/fight <player>: join a player's fight, /fight alone leaves it");
+	log_info("chatresp", "/distance <1-%d>: goal distance in tiles, 0 for the server default", (int)MAX_GOAL_DISTANCE);
+	log_info("chatresp", "/nodj: toggle starting attempts without double jump");
+	log_info("chatresp", "/scorelimit <0-%d>: points to win a fight, 0 for no limit", (int)MAX_SCORE_LIMIT);
+	log_info("chatresp", "/shotgun, /grenade, /laser, /ninja: toggle keeping that weapon");
+	log_info("chatresp", "/freeplay: toggle training without flags and paths");
+	log_info("chatresp", "In a fight, only the leader (*name*) changes these settings.");
+}
+
+std::optional<int> CGameControllerGTrain::RaceTimerStartTick(CCharacter *pChr)
+{
+	const int ClientId = pChr->GetPlayer()->GetCid();
+	const CAttempt &Attempt = m_aAttempts[ClientId];
+	if(Attempt.m_Start < 0)
+		return CGameControllerDDNet::RaceTimerStartTick(pChr);
+	// Every attempt times itself: zero while hovering, counting afterwards.
+	if(m_aPendingPlace[ClientId] || Attempt.m_StartTick < 0)
+		return Server()->Tick();
+	return Attempt.m_StartTick;
 }
 
 int CGameControllerGTrain::OnCharacterDeath(CCharacter *pVictim, CPlayer *pKiller, int Weapon)
@@ -617,7 +770,7 @@ void CGameControllerGTrain::UpdatePath(CCharacter *pChr)
 		Attempt.m_RouteNode = -1;
 		return;
 	}
-	// Normal movement and small backwards steps reuse the cached route.
+	// Normal movement and small backwards steps keep the drawn route stable.
 	const size_t Begin = Attempt.m_RouteIndex > 8 ? Attempt.m_RouteIndex - 8 : 0;
 	const size_t End = std::min(Attempt.m_vRoute.size(), Attempt.m_RouteIndex + 9);
 	for(size_t i = Begin; i < End; ++i)
@@ -627,16 +780,9 @@ void CGameControllerGTrain::UpdatePath(CCharacter *pChr)
 			Attempt.m_RouteNode = Node;
 			return;
 		}
-	// Deviations get a fresh A* route, at most five searches per second per
-	// player. Spectator snapshots never trigger another search.
-	const int Interval = std::max(1, Server()->TickSpeed() / 5);
-	if(Attempt.m_LastPathTick >= 0 && Server()->Tick() - Attempt.m_LastPathTick < Interval)
-	{
-		Attempt.m_RouteNode = -1;
-		return;
-	}
-	Attempt.m_LastPathTick = Server()->Tick();
-	m_Pathfinder.FindPath(Node, Attempt.m_pGoal->m_Goal, Attempt.m_vRoute);
+	// Deviations follow the goal's distance field, costing no search. Far
+	// beyond the field the route stays hidden until the player returns.
+	m_Pathfinder.FindPath(*Attempt.m_pGoal, Node, Attempt.m_vRoute);
 	Attempt.m_RouteIndex = 0;
 	Attempt.m_RouteNode = Node;
 }
@@ -644,10 +790,15 @@ void CGameControllerGTrain::UpdatePath(CCharacter *pChr)
 void CGameControllerGTrain::AnnounceFightScore(int Winner)
 {
 	const int Group = m_aFightGroup[Winner];
+	const int ScoreLimit = m_aSettings[Group].m_ScoreLimit;
+	const int Fails = m_aAttempts[Winner].m_Fails;
 	++m_aFightWins[Winner];
 	Server()->SetClientScore(Winner, SnapPlayerScore(Winner, GameServer()->m_apPlayers[Winner]));
+	char aScore[64] = "Fight score:";
+	if(ScoreLimit > 0)
+		str_format(aScore, sizeof(aScore), "Fight score (first to %d):", ScoreLimit);
 	char aMessage[MAX_CHAT_LENGTH];
-	str_format(aMessage, sizeof(aMessage), "'%s' wins! Fight score:", Server()->ClientName(Winner));
+	str_format(aMessage, sizeof(aMessage), "'%s' captured the flag (%d fail%s). %s", Server()->ClientName(Winner), Fails, Fails == 1 ? "" : "s", aScore);
 	bool First = true;
 	// Leader first, then the remaining members. Split long standings into
 	// complete chat messages rather than truncating names or scores.
@@ -661,13 +812,25 @@ void CGameControllerGTrain::AnnounceFightScore(int Winner)
 		if(str_length(aMessage) + str_length(aEntry) >= (int)sizeof(aMessage))
 		{
 			GameServer()->SendChat(-1, TEAM_ALL, aMessage);
-			str_copy(aMessage, "Fight score:");
+			str_copy(aMessage, aScore);
 			str_format(aEntry, sizeof(aEntry), " '%s': %d", Server()->ClientName(Other), m_aFightWins[Other]);
 		}
 		str_append(aMessage, aEntry);
 		First = false;
 	}
 	GameServer()->SendChat(-1, TEAM_ALL, aMessage);
+
+	if(ScoreLimit <= 0 || m_aFightWins[Winner] < ScoreLimit)
+		return;
+	str_format(aMessage, sizeof(aMessage), "'%s' won the fight with %d points! The fight score starts over.", Server()->ClientName(Winner), m_aFightWins[Winner]);
+	GameServer()->SendChat(-1, TEAM_ALL, aMessage);
+	for(int Other = 0; Other < MAX_CLIENTS; ++Other)
+	{
+		if(m_aFightGroup[Other] != Group || !GameServer()->m_apPlayers[Other])
+			continue;
+		m_aFightWins[Other] = 0;
+		Server()->SetClientScore(Other, SnapPlayerScore(Other, GameServer()->m_apPlayers[Other]));
+	}
 }
 
 void CGameControllerGTrain::CheckGoal(CCharacter *pChr)
@@ -697,7 +860,7 @@ void CGameControllerGTrain::CheckGoal(CCharacter *pChr)
 		{
 			char aMessage[256];
 			const double Seconds = (Server()->Tick() - Attempt.m_StartTick) / (double)Server()->TickSpeed();
-			str_format(aMessage, sizeof(aMessage), "'%s' captured the flag in %.2f seconds.", Server()->ClientName(ClientId), Seconds);
+			str_format(aMessage, sizeof(aMessage), "'%s' captured the flag in %.2f seconds (%d fail%s).", Server()->ClientName(ClientId), Seconds, Attempt.m_Fails, Attempt.m_Fails == 1 ? "" : "s");
 			GameServer()->SendChat(-1, TEAM_ALL, aMessage);
 			PlaceRandomly(pChr);
 		}
@@ -721,7 +884,7 @@ void CGameControllerGTrain::OnPlayerDisconnect(CPlayer *pPlayer, const char *pRe
 	m_aPendingPlace[ClientId] = false;
 	m_aAttempts[ClientId] = CAttempt();
 	m_aFightWins[ClientId] = 0;
-	m_aFreeplay[ClientId] = false;
+	m_aSettings[ClientId] = CSettings();
 	CGameControllerDDNet::OnPlayerDisconnect(pPlayer, pReason);
 }
 
@@ -744,7 +907,7 @@ void CGameControllerGTrain::Snap(int SnappingClient)
 		ClientId = pPlayer->SpectatorId();
 	if(ClientId < 0 || ClientId >= MAX_CLIENTS)
 		return;
-	if(m_aFreeplay[m_aFightGroup[ClientId]])
+	if(m_aSettings[m_aFightGroup[ClientId]].m_Freeplay)
 		return;
 	CCharacter *pChr = GameServer()->GetPlayerChar(ClientId);
 	const CAttempt &Attempt = m_aAttempts[ClientId];
@@ -858,9 +1021,13 @@ void CGameControllerGTrain::Tick()
 	g_Config.m_SvKillDelay = 0;
 	if(IsGamePaused())
 	{
-		for(CAttempt &Attempt : m_aAttempts)
-			if(Attempt.m_StartTick >= 0)
-				++Attempt.m_StartTick;
+		for(int ClientId = 0; ClientId < MAX_CLIENTS; ++ClientId)
+		{
+			if(m_aAttempts[ClientId].m_StartTick >= 0)
+				++m_aAttempts[ClientId].m_StartTick;
+			if(CCharacter *pChr = GameServer()->GetPlayerChar(ClientId))
+				KeepWeapons(pChr);
+		}
 		return;
 	}
 
@@ -885,6 +1052,7 @@ void CGameControllerGTrain::Tick()
 		CCharacter *pChr = GameServer()->GetPlayerChar(ClientId);
 		if(!pChr)
 			continue;
+		KeepWeapons(pChr);
 		if(pChr->IsPaused())
 		{
 			if(m_aAttempts[ClientId].m_StartTick >= 0)
@@ -897,9 +1065,10 @@ void CGameControllerGTrain::Tick()
 			const int Group = m_aFightGroup[ClientId];
 			const CAttempt &GroupAttempt = m_aAttempts[Group];
 			// A member's own respawn rejoins the current attempt without
-			// moving peers or rebuilding their shared goal.
+			// moving peers or rebuilding their shared goal. Players already
+			// in that attempt count it as a fail, joiners start fresh.
 			if(Group != ClientId && FightSize(Group) > 1 && GroupAttempt.m_pGoal && GroupAttempt.m_Start >= 0)
-				PlaceForAttempt(pChr, GroupAttempt.m_pGoal, GroupAttempt.m_Start, GroupAttempt.m_TargetDistance);
+				PlaceForAttempt(pChr, GroupAttempt.m_pGoal, GroupAttempt.m_Start, GroupAttempt.m_TargetDistance, true);
 			else
 				PlaceRandomly(pChr);
 			continue;
@@ -912,7 +1081,7 @@ void CGameControllerGTrain::Tick()
 			pChr->SetZeroGravity(false);
 			Attempt.m_StartTick = Server()->Tick();
 		}
-		if(m_aFreeplay[m_aFightGroup[ClientId]])
+		if(m_aSettings[m_aFightGroup[ClientId]].m_Freeplay)
 			continue;
 		UpdatePath(pChr);
 		if(!pChr->m_ZeroGravity && Attempt.m_pGoal && Attempt.m_pGoal->m_Ready)

@@ -38,8 +38,8 @@ TEST(GTrainPath, ExactPathDistanceAndObstacleRoute)
 	EXPECT_EQ(Goal.m_Distance, 10);
 	ASSERT_EQ(Goal.m_vInitialRoute.size(), 11);
 	std::vector<int> vRoute;
-	ASSERT_TRUE(Finder.FindPath(0, Goal.m_Goal, vRoute));
-	EXPECT_EQ(vRoute.size(), Goal.m_vInitialRoute.size());
+	ASSERT_TRUE(Finder.FindPath(Goal, 0, vRoute));
+	EXPECT_EQ(vRoute, Goal.m_vInitialRoute);
 	EXPECT_EQ(vRoute.front(), 0);
 	EXPECT_EQ(vRoute.back(), Goal.m_Goal);
 	for(size_t i = 1; i < vRoute.size(); ++i)
@@ -80,14 +80,17 @@ TEST(GTrainPath, DirectedTeleportAndDisconnectedRegion)
 	EXPECT_TRUE(Graph.IsTeleportStep(1, 2));
 	EXPECT_FALSE(Graph.IsTeleportStep(0, 1));
 	std::vector<int> vRoute;
-	EXPECT_TRUE(Finder.FindPath(0, 3, vRoute));
+	EXPECT_TRUE(Finder.FindPath(Goal, 0, vRoute));
 	EXPECT_EQ(vRoute, Goal.m_vInitialRoute);
-	EXPECT_FALSE(Finder.FindPath(3, 0, vRoute));
+	EXPECT_FALSE(Finder.FindPath(Goal, 4, vRoute));
 	EXPECT_TRUE(vRoute.empty());
-	EXPECT_FALSE(Finder.FindPath(4, 3, vRoute));
+	CGTrainGoal Back;
+	Finder.BuildField(Back, 0, 100);
+	EXPECT_FALSE(Finder.FindPath(Back, 3, vRoute));
+	EXPECT_TRUE(vRoute.empty());
 }
 
-TEST(GTrainPath, TeleportShortcutDoesNotUseChebyshevHeuristic)
+TEST(GTrainPath, TeleportShortcutAwayFromTheGoal)
 {
 	auto Graph = Grid(20, 1);
 	std::vector<std::pair<int, CGTrainPathGraph::CEdge>> vEdges;
@@ -98,8 +101,10 @@ TEST(GTrainPath, TeleportShortcutDoesNotUseChebyshevHeuristic)
 	vEdges.push_back({0, {19, 0}});
 	Graph.InitEdges(vEdges);
 	CGTrainPathfinder Finder(Graph);
+	CGTrainGoal Goal;
+	Finder.BuildField(Goal, 19, 100);
 	std::vector<int> vRoute;
-	ASSERT_TRUE(Finder.FindPath(10, 19, vRoute));
+	ASSERT_TRUE(Finder.FindPath(Goal, 10, vRoute));
 	EXPECT_EQ(vRoute, (std::vector<int>{10, 0, 19}));
 }
 
@@ -130,16 +135,22 @@ TEST(GTrainPath, NoGoalAndInvalidStart)
 	Finder.Build(Goal, -1, 100, 1);
 	EXPECT_FALSE(Goal.m_Ready);
 	std::vector<int> vRoute;
-	EXPECT_FALSE(Finder.FindPath(-1, 0, vRoute));
-	EXPECT_FALSE(Finder.FindPath(0, 1, vRoute));
-	EXPECT_TRUE(Finder.FindPath(0, 0, vRoute));
+	Finder.BuildField(Goal, 0, 100);
+	EXPECT_FALSE(Finder.FindPath(Goal, -1, vRoute));
+	EXPECT_FALSE(Finder.FindPath(Goal, 1, vRoute));
+	EXPECT_TRUE(Finder.FindPath(Goal, 0, vRoute));
 	EXPECT_EQ(vRoute, (std::vector<int>{0}));
+	Finder.BuildField(Goal, 1, 100);
+	EXPECT_FALSE(Finder.FindPath(Goal, 0, vRoute));
 }
 
-TEST(GTrainPath, AStarMatchesBreadthFirstSearchAroundWalls)
+TEST(GTrainPath, FieldRoutesMatchBreadthFirstSearchAroundWalls)
 {
 	const auto Graph = Grid(11, 9, {3, 14, 25, 36, 47, 58, 69, 71, 82, 93});
 	CGTrainPathfinder Finder(Graph);
+	std::vector<CGTrainGoal> vGoals(Graph.m_vNodes.size());
+	for(int Goal = 0; Goal < (int)Graph.m_vNodes.size(); ++Goal)
+		Finder.BuildField(vGoals[Goal], Goal, 1000);
 	for(int Start : {0, 10, 44, 98})
 	{
 		std::vector<int> vDistances(Graph.m_vNodes.size(), -1);
@@ -162,10 +173,18 @@ TEST(GTrainPath, AStarMatchesBreadthFirstSearchAroundWalls)
 		for(int Goal = 0; Goal < (int)Graph.m_vNodes.size(); ++Goal)
 		{
 			std::vector<int> vRoute;
-			EXPECT_EQ(Finder.FindPath(Start, Goal, vRoute), vDistances[Goal] >= 0);
+			EXPECT_EQ(Finder.FindPath(vGoals[Goal], Start, vRoute), vDistances[Goal] >= 0);
 			if(vDistances[Goal] >= 0)
 			{
 				EXPECT_EQ((int)vRoute.size() - 1, vDistances[Goal]);
+				EXPECT_EQ(vRoute.back(), Goal);
+				for(size_t i = 1; i < vRoute.size(); ++i)
+				{
+					bool Adjacent = false;
+					for(int j = Graph.m_vOutOffsets[vRoute[i - 1]]; j < Graph.m_vOutOffsets[vRoute[i - 1] + 1]; ++j)
+						Adjacent |= Graph.m_vOutEdges[j].m_Node == vRoute[i];
+					EXPECT_TRUE(Adjacent);
+				}
 			}
 		}
 	}
@@ -175,8 +194,10 @@ TEST(GTrainPath, DiagonalStepsAndGoalDistance)
 {
 	const auto Graph = Grid(4, 4);
 	CGTrainPathfinder Finder(Graph);
+	CGTrainGoal Corner;
+	Finder.BuildField(Corner, 15, 100);
 	std::vector<int> vRoute;
-	ASSERT_TRUE(Finder.FindPath(0, 15, vRoute));
+	ASSERT_TRUE(Finder.FindPath(Corner, 0, vRoute));
 	EXPECT_EQ(vRoute, (std::vector<int>{0, 5, 10, 15}));
 	CGTrainGoal Goal;
 	Finder.Build(Goal, 0, 3, 9);
@@ -195,13 +216,49 @@ TEST(GTrainPath, DiagonalsRequireBothSideTilesToBeSafe)
 		for(int i = Graph.m_vOutOffsets[0]; i < Graph.m_vOutOffsets[1]; ++i)
 			EXPECT_NE(Graph.m_vOutEdges[i].m_Node, 3);
 		CGTrainPathfinder Finder(Graph);
+		CGTrainGoal Goal;
+		Finder.BuildField(Goal, 3, 100);
 		std::vector<int> vRoute;
 		if(vBlocked.size() == 1)
 		{
-			ASSERT_TRUE(Finder.FindPath(0, 3, vRoute));
+			ASSERT_TRUE(Finder.FindPath(Goal, 0, vRoute));
 			EXPECT_EQ(vRoute.size(), 3); // must take two cardinal steps
 		}
 		else
-			EXPECT_FALSE(Finder.FindPath(0, 3, vRoute));
+			EXPECT_FALSE(Finder.FindPath(Goal, 0, vRoute));
 	}
+}
+
+TEST(GTrainPath, FieldDepthCoversDetoursBehindTheStart)
+{
+	const auto Graph = Grid(200, 1);
+	CGTrainPathfinder Finder(Graph);
+	CGTrainGoal Goal;
+	Finder.BuildField(Goal, 0, 5);
+	std::vector<int> vRoute;
+	EXPECT_TRUE(Finder.FindPath(Goal, 5, vRoute));
+	EXPECT_EQ(vRoute.size(), 6);
+	EXPECT_FALSE(Finder.FindPath(Goal, 6, vRoute));
+	EXPECT_TRUE(vRoute.empty());
+	EXPECT_EQ(Goal.m_vField.size(), 6); // only the reached node range is stored
+
+	// Built goals allow straying as far behind the start as the goal is ahead.
+	Finder.Build(Goal, 100, 10, 1);
+	ASSERT_TRUE(Goal.m_Ready);
+	const int Behind = Goal.m_Goal < 100 ? 1 : -1;
+	EXPECT_TRUE(Finder.FindPath(Goal, 100 + Behind * (10 + CGTrainPathfinder::FIELD_MARGIN), vRoute));
+	EXPECT_EQ((int)vRoute.size() - 1, 2 * 10 + CGTrainPathfinder::FIELD_MARGIN);
+	EXPECT_FALSE(Finder.FindPath(Goal, 100 + Behind * (11 + CGTrainPathfinder::FIELD_MARGIN), vRoute));
+}
+
+TEST(GTrainPath, EqualRoutesHeadStraightForTheGoal)
+{
+	const auto Graph = Grid(8, 4);
+	CGTrainPathfinder Finder(Graph);
+	CGTrainGoal Goal;
+	Finder.BuildField(Goal, 2 * 8 + 7, 100);
+	std::vector<int> vRoute;
+	ASSERT_TRUE(Finder.FindPath(Goal, 0, vRoute));
+	// Two diagonal steps reach the goal row, then the route continues straight.
+	EXPECT_EQ(vRoute, (std::vector<int>{0, 9, 18, 19, 20, 21, 22, 23}));
 }

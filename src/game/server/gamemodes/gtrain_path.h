@@ -24,7 +24,9 @@ struct CGTrainPathGraph
 	std::vector<CNode> m_vNodes;
 	std::vector<int> m_vOutOffsets;
 	std::vector<CEdge> m_vOutEdges;
-	bool m_HasTeleports = false;
+	// Reverse adjacency, for searching towards a goal across one-way teleports.
+	std::vector<int> m_vInOffsets;
+	std::vector<int> m_vInNodes;
 
 	void InitEdges(const std::vector<std::pair<int, CEdge>> &vEdges);
 	static void AddTileEdges(int Index, int Width, int Height, const std::vector<int> &vTileNodes, std::vector<std::pair<int, CEdge>> &vEdges);
@@ -33,41 +35,56 @@ struct CGTrainPathGraph
 
 struct CGTrainGoal
 {
+	enum
+	{
+		NO_DISTANCE = 0xffff,
+	};
 	int m_Goal = -1;
 	int m_Distance = -1;
 	bool m_Ready = false;
 	std::vector<int> m_vInitialRoute;
+	// Path distances to the goal, indexed from the lowest node within the
+	// field depth. Routes descend these distances instead of searching.
+	int m_FieldBegin = 0;
+	std::vector<uint16_t> m_vField;
+
+	int FieldDistance(int Node) const
+	{
+		const int Index = Node - m_FieldBegin;
+		if(Index < 0 || Index >= (int)m_vField.size() || m_vField[Index] == NO_DISTANCE)
+			return -1;
+		return m_vField[Index];
+	}
 };
 
 // Search scratch is reused by all players. Visit stamps avoid clearing the
-// entire map on each search; attempts store only their route, never a field.
+// entire map on each search. Each goal stores a distance field once, so
+// routing a player who leaves the planned route never searches again.
 class CGTrainPathfinder
 {
 	struct CState
 	{
 		uint32_t m_Stamp = 0;
 		int m_Cost;
-		int m_Parent;
-	};
-	struct COpen
-	{
-		int m_Node;
-		int m_Cost;
-		int m_Total;
-		bool operator<(const COpen &Other) const;
 	};
 	const CGTrainPathGraph &m_Graph;
 	std::vector<CState> m_vStates;
 	std::vector<int> m_vQueue;
-	std::vector<COpen> m_vOpen;
 	uint32_t m_Stamp = 0;
 	void BeginSearch();
-	int Heuristic(int Node, int Goal) const;
 
 public:
+	enum
+	{
+		// Routes cover straying behind the start by the goal distance again,
+		// plus this many tiles, so short goals still allow some detours.
+		FIELD_MARGIN = 32,
+		MAX_FIELD_DEPTH = CGTrainGoal::NO_DISTANCE - 1,
+	};
 	explicit CGTrainPathfinder(const CGTrainPathGraph &Graph);
 	void Build(CGTrainGoal &Goal, int Start, int Distance, unsigned Seed);
-	bool FindPath(int Start, int Goal, std::vector<int> &vRoute);
+	void BuildField(CGTrainGoal &Goal, int Node, int Depth);
+	bool FindPath(const CGTrainGoal &Goal, int Start, std::vector<int> &vRoute) const;
 };
 
 #endif // GAME_SERVER_GAMEMODES_GTRAIN_PATH_H

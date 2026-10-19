@@ -50,6 +50,11 @@ void CGameContext::ConHelp(IConsole::IResult *pResult, void *pUserData)
 
 	if(pResult->NumArguments() == 0)
 	{
+		if(auto *pController = dynamic_cast<CGameControllerGTrain *>(pSelf->m_pController))
+		{
+			pController->Help();
+			return;
+		}
 		log_info("chatresp", "/cmdlist will show a list of all chat commands");
 		log_info("chatresp", "/help + any command will show you the help for this command");
 		log_info("chatresp", "Example /help settings will display the help about /settings");
@@ -1156,6 +1161,48 @@ void CGameContext::ConRetry(IConsole::IResult *pResult, void *pUserData)
 	pController->Retry(pResult->m_ClientId);
 }
 
+void CGameContext::ConGoalDistance(IConsole::IResult *pResult, void *pUserData)
+{
+	CGameContext *pSelf = (CGameContext *)pUserData;
+	if(!CheckClientId(pResult->m_ClientId) || !pSelf->m_apPlayers[pResult->m_ClientId])
+		return;
+	auto *pController = dynamic_cast<CGameControllerGTrain *>(pSelf->m_pController);
+	if(!pController)
+	{
+		pSelf->SendChatTarget(pResult->m_ClientId, "Goal distances are only available in GTrain.");
+		return;
+	}
+	pController->Distance(pResult->m_ClientId, pResult->NumArguments() ? std::optional<int>(pResult->GetInteger(0)) : std::nullopt);
+}
+
+void CGameContext::ConNoDoubleJump(IConsole::IResult *pResult, void *pUserData)
+{
+	CGameContext *pSelf = (CGameContext *)pUserData;
+	if(!CheckClientId(pResult->m_ClientId) || !pSelf->m_apPlayers[pResult->m_ClientId])
+		return;
+	auto *pController = dynamic_cast<CGameControllerGTrain *>(pSelf->m_pController);
+	if(!pController)
+	{
+		pSelf->SendChatTarget(pResult->m_ClientId, "/nodj is only available in GTrain.");
+		return;
+	}
+	pController->NoDoubleJump(pResult->m_ClientId);
+}
+
+void CGameContext::ConScoreLimit(IConsole::IResult *pResult, void *pUserData)
+{
+	CGameContext *pSelf = (CGameContext *)pUserData;
+	if(!CheckClientId(pResult->m_ClientId) || !pSelf->m_apPlayers[pResult->m_ClientId])
+		return;
+	auto *pController = dynamic_cast<CGameControllerGTrain *>(pSelf->m_pController);
+	if(!pController)
+	{
+		pSelf->SendChatTarget(pResult->m_ClientId, "Score limits are only available in GTrain.");
+		return;
+	}
+	pController->ScoreLimit(pResult->m_ClientId, pResult->NumArguments() ? std::optional<int>(pResult->GetInteger(0)) : std::nullopt);
+}
+
 void CGameContext::ConInvite(IConsole::IResult *pResult, void *pUserData)
 {
 	CGameContext *pSelf = (CGameContext *)pUserData;
@@ -1967,6 +2014,17 @@ void CGameContext::ConLastTele(IConsole::IResult *pResult, void *pUserData)
 	pPlayer->Pause(CPlayer::PAUSE_NONE, true);
 }
 
+bool CGameContext::ToggleTrainingWeapon(IConsole::IResult *pResult, int Weapon)
+{
+	// GTrain has no practice mode, its weapon commands toggle lasting weapons.
+	auto *pController = dynamic_cast<CGameControllerGTrain *>(m_pController);
+	if(!pController)
+		return false;
+	if(CheckClientId(pResult->m_ClientId) && m_apPlayers[pResult->m_ClientId])
+		pController->ToggleWeapon(pResult->m_ClientId, Weapon);
+	return true;
+}
+
 CCharacter *CGameContext::GetPracticeCharacter(IConsole::IResult *pResult)
 {
 	if(!CheckClientId(pResult->m_ClientId))
@@ -2128,6 +2186,8 @@ void CGameContext::ConPracticeLiveFreeze(IConsole::IResult *pResult, void *pUser
 void CGameContext::ConPracticeShotgun(IConsole::IResult *pResult, void *pUserData)
 {
 	CGameContext *pSelf = (CGameContext *)pUserData;
+	if(pSelf->ToggleTrainingWeapon(pResult, WEAPON_SHOTGUN))
+		return;
 	if(pSelf->GetPracticeCharacter(pResult))
 		ConShotgun(pResult, pUserData);
 }
@@ -2135,6 +2195,8 @@ void CGameContext::ConPracticeShotgun(IConsole::IResult *pResult, void *pUserDat
 void CGameContext::ConPracticeGrenade(IConsole::IResult *pResult, void *pUserData)
 {
 	CGameContext *pSelf = (CGameContext *)pUserData;
+	if(pSelf->ToggleTrainingWeapon(pResult, WEAPON_GRENADE))
+		return;
 	if(pSelf->GetPracticeCharacter(pResult))
 		ConGrenade(pResult, pUserData);
 }
@@ -2142,6 +2204,8 @@ void CGameContext::ConPracticeGrenade(IConsole::IResult *pResult, void *pUserDat
 void CGameContext::ConPracticeLaser(IConsole::IResult *pResult, void *pUserData)
 {
 	CGameContext *pSelf = (CGameContext *)pUserData;
+	if(pSelf->ToggleTrainingWeapon(pResult, WEAPON_LASER))
+		return;
 	if(pSelf->GetPracticeCharacter(pResult))
 		ConLaser(pResult, pUserData);
 }
@@ -2219,6 +2283,8 @@ void CGameContext::ConPracticeUnWeapons(IConsole::IResult *pResult, void *pUserD
 void CGameContext::ConPracticeNinja(IConsole::IResult *pResult, void *pUserData)
 {
 	CGameContext *pSelf = (CGameContext *)pUserData;
+	if(pSelf->ToggleTrainingWeapon(pResult, WEAPON_NINJA))
+		return;
 	if(pSelf->GetPracticeCharacter(pResult))
 		ConNinja(pResult, pUserData);
 }

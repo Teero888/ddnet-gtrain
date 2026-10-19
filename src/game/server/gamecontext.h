@@ -537,6 +537,9 @@ private:
 	static void ConFight(IConsole::IResult *pResult, void *pUserData);
 	static void ConFreeplay(IConsole::IResult *pResult, void *pUserData);
 	static void ConRetry(IConsole::IResult *pResult, void *pUserData);
+	static void ConGoalDistance(IConsole::IResult *pResult, void *pUserData);
+	static void ConNoDoubleJump(IConsole::IResult *pResult, void *pUserData);
+	static void ConScoreLimit(IConsole::IResult *pResult, void *pUserData);
 	static void ConTeam0Mode(IConsole::IResult *pResult, void *pUserData);
 	static void ConWhisper(IConsole::IResult *pResult, void *pUserData);
 	static void ConConverse(IConsole::IResult *pResult, void *pUserData);
@@ -603,6 +606,7 @@ private:
 	static void ConReloadCensorlist(IConsole::IResult *pResult, void *pUserData);
 
 	CCharacter *GetPracticeCharacter(IConsole::IResult *pResult);
+	bool ToggleTrainingWeapon(IConsole::IResult *pResult, int Weapon);
 
 	CMutes m_Mutes;
 	CMutes m_VoteMutes;

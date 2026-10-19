@@ -214,6 +214,7 @@ public:
 	void GiveAllWeapons();
 	void ResetPickups();
 	void ResetJumps();
+	void UseUpAirJumps();
 	ERaceState m_DDRaceState;
 	int Team();
 	bool CanCollide(int ClientId) override;

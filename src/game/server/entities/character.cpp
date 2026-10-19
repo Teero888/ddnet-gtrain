@@ -1456,10 +1456,13 @@ void CCharacter::HandleBroadcast()
 		m_LastTimeCpBroadcasted = m_LastTimeCp;
 		m_LastBroadcast = Server()->Tick();
 	}
-	else if((m_pPlayer->m_TimerType == CPlayer::TIMERTYPE_BROADCAST || m_pPlayer->m_TimerType == CPlayer::TIMERTYPE_GAMETIMER_AND_BROADCAST) && m_DDRaceState == ERaceState::STARTED && m_LastBroadcast + Server()->TickSpeed() * g_Config.m_SvTimeInBroadcastInterval <= Server()->Tick())
+	else if((m_pPlayer->m_TimerType == CPlayer::TIMERTYPE_BROADCAST || m_pPlayer->m_TimerType == CPlayer::TIMERTYPE_GAMETIMER_AND_BROADCAST) && m_LastBroadcast + Server()->TickSpeed() * g_Config.m_SvTimeInBroadcastInterval <= Server()->Tick())
 	{
+		const std::optional<int> RaceStartTick = GameServer()->m_pController->RaceTimerStartTick(this);
+		if(!RaceStartTick)
+			return;
 		char aBuf[32];
-		int Time = (int64_t)100 * ((float)(Server()->Tick() - m_StartTime) / ((float)Server()->TickSpeed()));
+		int Time = (int64_t)100 * ((float)(Server()->Tick() - *RaceStartTick) / ((float)Server()->TickSpeed()));
 		str_time(Time, ETimeFormat::HOURS, aBuf, sizeof(aBuf));
 		GameServer()->SendBroadcast(aBuf, m_pPlayer->GetCid(), false);
 		m_LastTimeCpBroadcasted = m_LastTimeCp;
@@ -2417,6 +2420,13 @@ void CCharacter::ResetJumps()
 {
 	m_Core.m_JumpedTotal = 0;
 	m_Core.m_Jumped = 0;
+}
+
+void CCharacter::UseUpAirJumps()
+{
+	// Dark feet until the ground or a refill tile restores the jumps.
+	m_Core.m_JumpedTotal = std::max(0, m_Core.m_Jumps - 1);
+	m_Core.m_Jumped = 2;
 }
 
 void CCharacter::GiveWeapon(int Weapon, bool Remove)

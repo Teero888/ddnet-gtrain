@@ -505,12 +505,14 @@ void CPlayer::Snap(int SnappingClient)
 	DDNetPlayer.m_FinishTimeMillis = PlayerTime.m_Milliseconds;
 	Server()->SnapNewItem(TranslatedId, DDNetPlayer);
 
-	if(Server()->IsSixup(SnappingClient) && m_pCharacter && m_pCharacter->m_DDRaceState == ERaceState::STARTED &&
-		GameServer()->m_apPlayers[SnappingClient]->m_TimerType == TIMERTYPE_SIXUP)
+	if(Server()->IsSixup(SnappingClient) && m_pCharacter && GameServer()->m_apPlayers[SnappingClient]->m_TimerType == TIMERTYPE_SIXUP)
 	{
-		protocol7::CNetObj_PlayerInfoRace RaceInfo = {};
-		RaceInfo.m_RaceStartTick = m_pCharacter->m_StartTime;
-		Server()->SnapNewItem(TranslatedId, RaceInfo);
+		if(const std::optional<int> RaceStartTick = GameServer()->m_pController->RaceTimerStartTick(m_pCharacter))
+		{
+			protocol7::CNetObj_PlayerInfoRace RaceInfo = {};
+			RaceInfo.m_RaceStartTick = *RaceStartTick;
+			Server()->SnapNewItem(TranslatedId, RaceInfo);
+		}
 	}
 
 	bool ShowSpec = m_pCharacter && m_pCharacter->IsPaused() && m_pCharacter->CanSnapCharacter(SnappingClient);

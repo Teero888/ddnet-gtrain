@@ -4107,6 +4107,9 @@ void CGameContext::RegisterChatCommands()
 	Console()->Register("invincible", "", CFGFLAG_CHAT | CFGFLAG_SERVER, ConRetry, this, "Retry the current training position and goal");
 	Console()->Register("tc", "", CFGFLAG_CHAT | CFGFLAG_SERVER, ConRetry, this, "Retry the current training position and goal");
 	Console()->Register("telecursor", "", CFGFLAG_CHAT | CFGFLAG_SERVER, ConRetry, this, "Retry the current training position and goal");
+	Console()->Register("distance", "?i[tiles]", CFGFLAG_CHAT | CFGFLAG_SERVER, ConGoalDistance, this, "Show or set the GTrain goal distance, 1-500 tiles or 0 for the server default (fight leader only in a group)");
+	Console()->Register("nodj", "", CFGFLAG_CHAT | CFGFLAG_SERVER, ConNoDoubleJump, this, "Toggle starting GTrain attempts without double jump (fight leader only in a group)");
+	Console()->Register("scorelimit", "?i[score]", CFGFLAG_CHAT | CFGFLAG_SERVER, ConScoreLimit, this, "Show or set the points to win a GTrain fight, 0 for no limit (fight leader only in a group)");
 	Console()->Register("team0mode", "?i['0'|'1']", CFGFLAG_CHAT | CFGFLAG_SERVER, ConTeam0Mode, this, "Toggle team between team 0 and team mode. This mode will make your team behave like team 0.");
 
 	Console()->Register("showothers", "?i['0'|'1'|'2']", CFGFLAG_CHAT | CFGFLAG_SERVER, ConShowOthers, this, "Whether to show players from other teams or not (off by default), optional i = 0 for off, i = 1 for on, i = 2 for own team only");

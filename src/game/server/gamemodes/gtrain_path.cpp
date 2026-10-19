@@ -31,19 +31,27 @@ void CGTrainPathGraph::AddTileEdges(int Index, int Width, int Height, const std:
 
 void CGTrainPathGraph::InitEdges(const std::vector<std::pair<int, CEdge>> &vEdges)
 {
-	m_HasTeleports = false;
 	m_vOutOffsets.assign(m_vNodes.size() + 1, 0);
+	m_vInOffsets.assign(m_vNodes.size() + 1, 0);
 	for(const auto &Edge : vEdges)
 	{
 		++m_vOutOffsets[Edge.first + 1];
-		m_HasTeleports |= Edge.second.m_Direction == 0;
+		++m_vInOffsets[Edge.second.m_Node + 1];
 	}
 	for(size_t i = 1; i < m_vOutOffsets.size(); ++i)
+	{
 		m_vOutOffsets[i] += m_vOutOffsets[i - 1];
+		m_vInOffsets[i] += m_vInOffsets[i - 1];
+	}
 	m_vOutEdges.resize(vEdges.size());
-	auto vCursor = m_vOutOffsets;
+	m_vInNodes.resize(vEdges.size());
+	auto vOutCursor = m_vOutOffsets;
+	auto vInCursor = m_vInOffsets;
 	for(const auto &Edge : vEdges)
-		m_vOutEdges[vCursor[Edge.first]++] = Edge.second;
+	{
+		m_vOutEdges[vOutCursor[Edge.first]++] = Edge.second;
+		m_vInNodes[vInCursor[Edge.second.m_Node]++] = Edge.first;
+	}
 }
 
 bool CGTrainPathGraph::IsTeleportStep(int From, int To) const
@@ -59,13 +67,6 @@ CGTrainPathfinder::CGTrainPathfinder(const CGTrainPathGraph &Graph) :
 {
 }
 
-bool CGTrainPathfinder::COpen::operator<(const COpen &Other) const
-{
-	// Minimum total first; deeper nodes first on ties to avoid exploring
-	// every equally promising tile in a large open rectangle.
-	return m_Total != Other.m_Total ? m_Total > Other.m_Total : m_Cost < Other.m_Cost;
-}
-
 void CGTrainPathfinder::BeginSearch()
 {
 	m_vStates.resize(m_Graph.m_vNodes.size());
@@ -77,53 +78,79 @@ void CGTrainPathfinder::BeginSearch()
 	}
 }
 
-int CGTrainPathfinder::Heuristic(int Node, int Goal) const
+void CGTrainPathfinder::BuildField(CGTrainGoal &Goal, int Node, int Depth)
 {
-	// Chebyshev distance is admissible when a diagonal counts as one tile
-	// step, matching the goal-distance BFS. Teleports
-	// can shortcut it arbitrarily: use a zero heuristic on those maps.
-	if(m_Graph.m_HasTeleports)
-		return 0;
-	const vec2 Offset = m_Graph.m_vNodes[Node].m_Pos - m_Graph.m_vNodes[Goal].m_Pos;
-	return round_to_int(std::max(std::abs(Offset.x), std::abs(Offset.y)) / 32.0f);
-}
-
-bool CGTrainPathfinder::FindPath(int Start, int Goal, std::vector<int> &vRoute)
-{
-	vRoute.clear();
-	if(Start < 0 || Goal < 0 || Start >= (int)m_Graph.m_vNodes.size() || Goal >= (int)m_Graph.m_vNodes.size())
-		return false;
+	Goal.m_Goal = Node;
+	Goal.m_FieldBegin = 0;
+	Goal.m_vField.clear();
+	if(Node < 0 || Node >= (int)m_Graph.m_vNodes.size())
+		return;
+	Depth = std::clamp(Depth, 0, (int)MAX_FIELD_DEPTH);
 	BeginSearch();
-	m_vOpen.clear();
-	m_vStates[Start] = {m_Stamp, 0, -1};
-	m_vOpen.push_back({Start, 0, Heuristic(Start, Goal)});
-	while(!m_vOpen.empty())
+	m_vQueue.clear();
+	m_vQueue.push_back(Node);
+	m_vStates[Node] = {m_Stamp, 0};
+	int Begin = Node, End = Node;
+	// Reverse BFS over incoming edges yields the distance towards the goal.
+	for(size_t Head = 0; Head < m_vQueue.size(); ++Head)
 	{
-		std::pop_heap(m_vOpen.begin(), m_vOpen.end());
-		const COpen Current = m_vOpen.back();
-		m_vOpen.pop_back();
-		if(Current.m_Cost != m_vStates[Current.m_Node].m_Cost)
-			continue;
-		if(Current.m_Node == Goal)
+		const int Current = m_vQueue[Head];
+		const int Distance = m_vStates[Current].m_Cost;
+		if(Distance >= Depth)
+			break; // the queue is ordered by distance
+		for(int i = m_Graph.m_vInOffsets[Current]; i < m_Graph.m_vInOffsets[Current + 1]; ++i)
 		{
-			for(int Node = Goal; Node >= 0; Node = m_vStates[Node].m_Parent)
-				vRoute.push_back(Node);
-			std::reverse(vRoute.begin(), vRoute.end());
-			return true;
-		}
-		for(int i = m_Graph.m_vOutOffsets[Current.m_Node]; i < m_Graph.m_vOutOffsets[Current.m_Node + 1]; ++i)
-		{
-			const int Next = m_Graph.m_vOutEdges[i].m_Node;
-			CState &State = m_vStates[Next];
-			const int Cost = Current.m_Cost + 1;
-			if(State.m_Stamp == m_Stamp && State.m_Cost <= Cost)
+			const int Previous = m_Graph.m_vInNodes[i];
+			if(m_vStates[Previous].m_Stamp == m_Stamp)
 				continue;
-			State = {m_Stamp, Cost, Current.m_Node};
-			m_vOpen.push_back({Next, Cost, Cost + Heuristic(Next, Goal)});
-			std::push_heap(m_vOpen.begin(), m_vOpen.end());
+			m_vStates[Previous] = {m_Stamp, Distance + 1};
+			m_vQueue.push_back(Previous);
+			Begin = std::min(Begin, Previous);
+			End = std::max(End, Previous);
 		}
 	}
-	return false;
+	// Node indices follow the map rows, so a field around one goal spans a
+	// small index range even on large maps, unless teleports leave it.
+	Goal.m_FieldBegin = Begin;
+	Goal.m_vField.assign(End - Begin + 1, CGTrainGoal::NO_DISTANCE);
+	for(const int Visited : m_vQueue)
+		Goal.m_vField[Visited - Begin] = m_vStates[Visited].m_Cost;
+}
+
+bool CGTrainPathfinder::FindPath(const CGTrainGoal &Goal, int Start, std::vector<int> &vRoute) const
+{
+	vRoute.clear();
+	if(Start < 0 || Start >= (int)m_Graph.m_vNodes.size())
+		return false;
+	int Distance = Goal.FieldDistance(Start);
+	if(Distance < 0)
+		return false;
+	const vec2 Target = m_Graph.m_vNodes[Goal.m_Goal].m_Pos;
+	vRoute.reserve(Distance + 1);
+	vRoute.push_back(Start);
+	// Every node in the field has a neighbor one step closer. Among equally
+	// short steps, the one nearest to the goal keeps open routes straight.
+	for(int Node = Start; Distance > 0; --Distance)
+	{
+		int Next = -1;
+		float NextDistance = 0.0f;
+		for(int i = m_Graph.m_vOutOffsets[Node]; i < m_Graph.m_vOutOffsets[Node + 1]; ++i)
+		{
+			const int Candidate = m_Graph.m_vOutEdges[i].m_Node;
+			if(Goal.FieldDistance(Candidate) != Distance - 1)
+				continue;
+			const vec2 Offset = m_Graph.m_vNodes[Candidate].m_Pos - Target;
+			const float CandidateDistance = dot(Offset, Offset);
+			if(Next < 0 || CandidateDistance < NextDistance)
+			{
+				Next = Candidate;
+				NextDistance = CandidateDistance;
+			}
+		}
+		Node = Next;
+		vRoute.push_back(Node);
+	}
+	return true;
 }
 
 void CGTrainPathfinder::Build(CGTrainGoal &Goal, int Start, int Distance, unsigned Seed)
@@ -132,13 +159,15 @@ void CGTrainPathfinder::Build(CGTrainGoal &Goal, int Start, int Distance, unsign
 	Goal.m_Goal = -1;
 	Goal.m_Distance = -1;
 	Goal.m_vInitialRoute.clear();
+	Goal.m_vField.clear();
 	if(Start < 0 || Start >= (int)m_Graph.m_vNodes.size())
 		return;
 	BeginSearch();
 	m_vQueue.clear();
 	m_vQueue.push_back(Start);
-	m_vStates[Start] = {m_Stamp, 0, -1};
+	m_vStates[Start] = {m_Stamp, 0};
 	std::mt19937 Random(Seed);
+	int GoalNode = -1;
 	int NumCandidates = 0;
 	// BFS chooses a goal by actual path tile distance, not raw displacement.
 	for(size_t Head = 0; Head < m_vQueue.size(); ++Head)
@@ -153,7 +182,7 @@ void CGTrainPathfinder::Build(CGTrainGoal &Goal, int Start, int Distance, unsign
 				NumCandidates = 0;
 			}
 			if(std::uniform_int_distribution<int>(1, ++NumCandidates)(Random) == 1)
-				Goal.m_Goal = Node;
+				GoalNode = Node;
 		}
 		if(Depth >= Distance)
 			continue;
@@ -162,17 +191,13 @@ void CGTrainPathfinder::Build(CGTrainGoal &Goal, int Start, int Distance, unsign
 			const int Next = m_Graph.m_vOutEdges[i].m_Node;
 			if(m_vStates[Next].m_Stamp == m_Stamp)
 				continue;
-			m_vStates[Next] = {m_Stamp, Depth + 1, Node};
+			m_vStates[Next] = {m_Stamp, Depth + 1};
 			m_vQueue.push_back(Next);
 		}
 	}
-	if(Goal.m_Goal >= 0)
-	{
-		// The goal selection already found a shortest route. Reuse its
-		// parents; A* is needed only when the player leaves this route.
-		for(int Node = Goal.m_Goal; Node >= 0; Node = m_vStates[Node].m_Parent)
-			Goal.m_vInitialRoute.push_back(Node);
-		std::reverse(Goal.m_vInitialRoute.begin(), Goal.m_vInitialRoute.end());
-		Goal.m_Ready = true;
-	}
+	if(GoalNode < 0)
+		return;
+	BuildField(Goal, GoalNode, 2 * Goal.m_Distance + FIELD_MARGIN);
+	FindPath(Goal, Start, Goal.m_vInitialRoute);
+	Goal.m_Ready = true;
 }
