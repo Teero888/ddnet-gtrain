@@ -6,7 +6,7 @@
 
 namespace
 {
-	CGTrainPathGraph Grid(int Width, int Height, const std::vector<int> &vBlocked = {})
+	CGTrainPathGraph Grid(int Width, int Height, const std::vector<int> &vBlocked = {}, const std::vector<uint8_t> &vStoppers = {})
 	{
 		CGTrainPathGraph Graph;
 		std::vector<bool> vPassable(Width * Height, true);
@@ -21,7 +21,7 @@ namespace
 			if(vPassable[i])
 				vTileNodes[i] = i;
 		for(int i = 0; i < Width * Height; ++i)
-			CGTrainPathGraph::AddTileEdges(i, Width, Height, vTileNodes, vEdges);
+			CGTrainPathGraph::AddTileEdges(i, Width, Height, vTileNodes, vStoppers, vEdges);
 		Graph.InitEdges(vEdges);
 		return Graph;
 	}
@@ -261,4 +261,50 @@ TEST(GTrainPath, EqualRoutesHeadStraightForTheGoal)
 	ASSERT_TRUE(Finder.FindPath(Goal, 0, vRoute));
 	// Two diagonal steps reach the goal row, then the route continues straight.
 	EXPECT_EQ(vRoute, (std::vector<int>{0, 9, 18, 19, 20, 21, 22, 23}));
+}
+
+TEST(GTrainPath, StoppersBlockRoutesAgainstTheirDirection)
+{
+	constexpr int Left = CGTrainPathGraph::DIRECTION_LEFT, Right = CGTrainPathGraph::DIRECTION_RIGHT;
+	constexpr int Down = CGTrainPathGraph::DIRECTION_DOWN;
+	const auto Reachable = [](const CGTrainPathGraph &Graph, int Start, int Goal) {
+		CGTrainPathfinder Finder(Graph);
+		CGTrainGoal Field;
+		Finder.BuildField(Field, Goal, 100);
+		std::vector<int> vRoute;
+		return Finder.FindPath(Field, Start, vRoute);
+	};
+
+	// A one-way stopper lets routes pass in its direction only, also when
+	// starting on top of it.
+	std::vector<uint8_t> vStoppers(5);
+	vStoppers[2] = Left | Left << 4;
+	auto Graph = Grid(5, 1, {}, vStoppers);
+	EXPECT_TRUE(Reachable(Graph, 0, 4));
+	EXPECT_TRUE(Reachable(Graph, 2, 4));
+	EXPECT_FALSE(Reachable(Graph, 4, 0));
+	EXPECT_FALSE(Reachable(Graph, 4, 2));
+	EXPECT_FALSE(Reachable(Graph, 2, 0));
+
+	// Two-way stoppers block entering from both sides, but not leaving them.
+	vStoppers[2] = Left | Right;
+	Graph = Grid(5, 1, {}, vStoppers);
+	EXPECT_FALSE(Reachable(Graph, 0, 4));
+	EXPECT_FALSE(Reachable(Graph, 4, 0));
+	EXPECT_TRUE(Reachable(Graph, 2, 0));
+	EXPECT_TRUE(Reachable(Graph, 2, 4));
+
+	// Diagonals need both ways around the corner. Here the tile right of the
+	// start blocks moving down, so the route steps down first.
+	vStoppers.assign(4, 0);
+	vStoppers[1] = Down | Down << 4;
+	Graph = Grid(2, 2, {}, vStoppers);
+	for(int i = Graph.m_vOutOffsets[0]; i < Graph.m_vOutOffsets[1]; ++i)
+		EXPECT_NE(Graph.m_vOutEdges[i].m_Node, 3);
+	CGTrainPathfinder Finder(Graph);
+	CGTrainGoal Goal;
+	Finder.BuildField(Goal, 3, 100);
+	std::vector<int> vRoute;
+	ASSERT_TRUE(Finder.FindPath(Goal, 0, vRoute));
+	EXPECT_EQ(vRoute, (std::vector<int>{0, 2, 3}));
 }

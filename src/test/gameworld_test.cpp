@@ -1612,6 +1612,43 @@ TEST_F(GameWorld, GTrainScoreboardWinsAndLeaderNamesKeepCanonicalServerNames)
 	EXPECT_STREQ(m_pServer->ClientName(Anna), "Anna");
 }
 
+TEST_F(GameWorld, GTrainGoalsAndPathsRespectStoppers)
+{
+	PrepareTrainingCorridor();
+	CCollision *pCollision = GameServer()->Collision();
+	// A one-way stopper in the corridor that only lets tees pass to the right.
+	const int StopperX = pCollision->GetWidth() / 2;
+	const int Stopper = pCollision->GetPureMapIndex(vec2(StopperX * 32 + 16, 80));
+	auto *pTiles = const_cast<CTile *>(pCollision->GameLayer());
+	pTiles[Stopper].m_Index = TILE_STOP;
+	pTiles[Stopper].m_Flags = ROTATION_90;
+	ASSERT_EQ(pCollision->GetTileMoveRestrictions(Stopper, false), CANTMOVE_LEFT);
+	ASSERT_EQ(pCollision->GetTileMoveRestrictions(Stopper, true), CANTMOVE_LEFT);
+	g_Config.m_SvGtrainGoalDistance = 100;
+	delete GameServer()->m_pController;
+	GameServer()->m_pController = new CGameControllerGTrain(GameServer());
+	const int Runner = SpawnTrainingPlayers({"Runner"})[0];
+	auto *pController = static_cast<CGameControllerGTrain *>(GameServer()->m_pController);
+	GameServer()->m_apPlayers[Runner]->m_ShowAll = true;
+	bool Crossed = false;
+	for(int Attempt = 0; Attempt < 40; ++Attempt)
+	{
+		const float StartX = GameServer()->GetPlayerChar(Runner)->m_Pos.x;
+		const float GoalX = TrainingGoal(Runner).x;
+		const float StopperCenter = StopperX * 32 + 16;
+		// Goals are never behind the stopper, and paths never cross it leftwards.
+		if(StartX >= StopperCenter)
+		{
+			EXPECT_GT(GoalX, StopperCenter);
+		}
+		Crossed |= StartX < StopperCenter && GoalX > StopperCenter;
+		GameServer()->m_apPlayers[Runner]->KillCharacter(WEAPON_SELF);
+		GameServer()->m_apPlayers[Runner]->ForceSpawn(vec2(80, 80));
+		pController->Tick();
+	}
+	EXPECT_TRUE(Crossed); // passing in the stopper's direction still works
+}
+
 TEST_F(GameWorld, GTrainCaptureCountsFailsAtTheSamePosition)
 {
 	PrepareTrainingCorridor();

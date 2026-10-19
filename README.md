@@ -38,7 +38,7 @@ A server-side [DDNet](https://github.com/ddnet/ddnet) mod for training Gores map
 
 ## Pathfinding
 
-The walkable tile graph is built once when the map loads. Paths never go through solid, freeze or death tiles, and diagonal steps can't cut corners. Teleporters count as path steps; checkpoint teleporters are skipped because they depend on each player's history. Every new flag stores its distance to all nearby tiles, so redrawing the path when you leave it costs no search. If you stray more than the goal distance plus 32 tiles behind your start, the path is hidden until you come back.
+The walkable tile graph is built once when the map loads. Paths never go through solid, freeze or death tiles, never pass stoppers against their direction, and diagonal steps can't cut corners. Teleporters count as path steps; checkpoint teleporters are skipped because they depend on each player's history. Every new flag stores its distance to all nearby tiles, so redrawing the path when you leave it costs no search. If you stray more than the goal distance plus 32 tiles behind your start, the path is hidden until you come back.
 
 ## Server setup
 

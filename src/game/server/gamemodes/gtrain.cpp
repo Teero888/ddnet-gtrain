@@ -232,6 +232,13 @@ void CGameControllerGTrain::FindTrainPositions()
 	for(vec2 Pos : m_vTrainPositions)
 		m_PathGraph.m_vNodes[m_vTileNodes[pCollision->GetPureMapIndex(Pos)]].m_Goal = true;
 
+	// Paths cannot pass stoppers against their direction. One-way stoppers
+	// also block moving off them, like CCollision::GetMoveRestrictions.
+	static_assert((int)CGTrainPathGraph::DIRECTION_LEFT == CANTMOVE_LEFT && (int)CGTrainPathGraph::DIRECTION_RIGHT == CANTMOVE_RIGHT &&
+		      (int)CGTrainPathGraph::DIRECTION_UP == CANTMOVE_UP && (int)CGTrainPathGraph::DIRECTION_DOWN == CANTMOVE_DOWN);
+	std::vector<uint8_t> vStoppers(Width * Height);
+	for(int Index = 0; Index < Width * Height; ++Index)
+		vStoppers[Index] = pCollision->GetTileMoveRestrictions(Index, false) | pCollision->GetTileMoveRestrictions(Index, true) << 4;
 	std::vector<std::pair<int, CGTrainPathGraph::CEdge>> vEdges;
 	for(int Index = 0; Index < Width * Height; ++Index)
 	{
@@ -249,7 +256,7 @@ void CGameControllerGTrain::FindTrainPositions()
 			}
 			continue;
 		}
-		CGTrainPathGraph::AddTileEdges(Index, Width, Height, m_vTileNodes, vEdges);
+		CGTrainPathGraph::AddTileEdges(Index, Width, Height, m_vTileNodes, vStoppers, vEdges);
 	}
 	m_PathGraph.InitEdges(vEdges);
 }

@@ -11,6 +11,14 @@
 // teleport, which must never be drawn as a line through intervening tiles.
 struct CGTrainPathGraph
 {
+	// Edge direction bits, also used for the directions stoppers block.
+	enum
+	{
+		DIRECTION_LEFT = 1 << 0,
+		DIRECTION_RIGHT = 1 << 1,
+		DIRECTION_UP = 1 << 2,
+		DIRECTION_DOWN = 1 << 3,
+	};
 	struct CNode
 	{
 		vec2 m_Pos;
@@ -29,7 +37,9 @@ struct CGTrainPathGraph
 	std::vector<int> m_vInNodes;
 
 	void InitEdges(const std::vector<std::pair<int, CEdge>> &vEdges);
-	static void AddTileEdges(int Index, int Width, int Height, const std::vector<int> &vTileNodes, std::vector<std::pair<int, CEdge>> &vEdges);
+	// vStoppers holds per tile the directions blocked moving onto it in the
+	// low four bits and moving off it in the high four bits, or is empty.
+	static void AddTileEdges(int Index, int Width, int Height, const std::vector<int> &vTileNodes, const std::vector<uint8_t> &vStoppers, std::vector<std::pair<int, CEdge>> &vEdges);
 	bool IsTeleportStep(int From, int To) const;
 };
 

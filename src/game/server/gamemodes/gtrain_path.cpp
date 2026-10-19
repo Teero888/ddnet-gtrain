@@ -3,29 +3,40 @@
 #include <algorithm>
 #include <random>
 
-void CGTrainPathGraph::AddTileEdges(int Index, int Width, int Height, const std::vector<int> &vTileNodes, std::vector<std::pair<int, CEdge>> &vEdges)
+void CGTrainPathGraph::AddTileEdges(int Index, int Width, int Height, const std::vector<int> &vTileNodes, const std::vector<uint8_t> &vStoppers, std::vector<std::pair<int, CEdge>> &vEdges)
 {
 	const int Node = vTileNodes[Index];
 	if(Node < 0)
 		return;
+	const auto Blocked = [&](int From, int To, int Direction) {
+		return !vStoppers.empty() && ((vStoppers[To] & Direction) || ((vStoppers[From] >> 4) & Direction));
+	};
 	const int x = Index % Width, y = Index / Width;
 	for(int dy = -1; dy <= 1; ++dy)
 		for(int dx = -1; dx <= 1; ++dx)
 		{
 			if((dx == 0 && dy == 0) || x + dx < 0 || x + dx >= Width || y + dy < 0 || y + dy >= Height)
 				continue;
-			const int Destination = vTileNodes[(y + dy) * Width + x + dx];
+			const int DestinationIndex = (y + dy) * Width + x + dx;
+			const int Destination = vTileNodes[DestinationIndex];
 			if(Destination < 0)
 				continue;
-			// Both tiles beside a diagonal must be safe. Merely checking its
-			// destination would allow squeezing past solid or freeze corners.
-			if(dx != 0 && dy != 0 && (vTileNodes[y * Width + x + dx] < 0 || vTileNodes[(y + dy) * Width + x] < 0))
+			const int Horizontal = dx < 0 ? DIRECTION_LEFT : (dx > 0 ? DIRECTION_RIGHT : 0);
+			const int Vertical = dy < 0 ? DIRECTION_UP : (dy > 0 ? DIRECTION_DOWN : 0);
+			if(dx != 0 && dy != 0)
+			{
+				// Both tiles beside a diagonal must be safe. Merely checking its
+				// destination would allow squeezing past solid or freeze corners.
+				// Stoppers must also allow both ways around the corner.
+				const int SideX = y * Width + x + dx, SideY = (y + dy) * Width + x;
+				if(vTileNodes[SideX] < 0 || vTileNodes[SideY] < 0 ||
+					Blocked(Index, SideX, Horizontal) || Blocked(SideX, DestinationIndex, Vertical) ||
+					Blocked(Index, SideY, Vertical) || Blocked(SideY, DestinationIndex, Horizontal))
+					continue;
+			}
+			else if(Blocked(Index, DestinationIndex, Horizontal | Vertical))
 				continue;
-			const uint8_t Direction = (dx < 0 ? 1 : dx > 0 ? 2 :
-									 0) |
-						  (dy < 0 ? 4 : dy > 0 ? 8 :
-									 0);
-			vEdges.push_back({Node, {Destination, Direction}});
+			vEdges.push_back({Node, {Destination, (uint8_t)(Horizontal | Vertical)}});
 		}
 }
 
