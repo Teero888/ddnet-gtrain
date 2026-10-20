@@ -1687,8 +1687,8 @@ bool CScoreWorker::ShowElo(IDbConnection *pSqlServer, const ISqlData *pGameData,
 		pSqlServer->GetString(3, aName, sizeof(aName));
 		pResult->m_MessageKind = CScorePlayerResult::ALL;
 		str_format(paMessages[0], sizeof(paMessages[0]),
-			"%d. %s ELO: %d (%" PRId64 " points), requested by %s",
-			Rank, aName, (int)GTrainElo::FromPoints(Points), Points, pData->m_aRequestingPlayer);
+			"%d. %s ELO: %d, requested by %s",
+			Rank, aName, (int)GTrainElo::FromPoints(Points), pData->m_aRequestingPlayer);
 	}
 	else
 	{
@@ -1737,8 +1737,8 @@ bool CScoreWorker::ShowGTrainProfile(IDbConnection *pSqlServer, const ISqlData *
 		pSqlServer->GetString(7, aName, sizeof(aName));
 		pResult->m_MessageKind = CScorePlayerResult::ALL;
 		str_format(paMessages[0], sizeof(paMessages[0]),
-			"%d. %s ELO: %d (%" PRId64 " points), %d %s, %d %s, %d %s, %s played, requested by %s",
-			Rank, aName, (int)GTrainElo::FromPoints(Points), Points,
+			"%d. %s ELO: %d, %d %s, %d %s, %d %s, %s played, requested by %s",
+			Rank, aName, (int)GTrainElo::FromPoints(Points),
 			Captures, Captures == 1 ? "capture" : "captures",
 			Attempts, Attempts == 1 ? "attempt" : "attempts",
 			Respawns, Respawns == 1 ? "respawn" : "respawns",

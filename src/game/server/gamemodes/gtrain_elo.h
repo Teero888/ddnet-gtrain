@@ -19,8 +19,8 @@ namespace GTrainElo
 	inline constexpr double STEP_MULTIPLIER = 1.5;
 	// Typical capture speeds in path tiles per second, from the first captures
 	// on the KoG maps. Harder maps are slower, which must not cost points.
-	inline constexpr double EASY_TILES_PER_SECOND = 16;
-	inline constexpr double EXTREME_TILES_PER_SECOND = 8;
+	inline constexpr double EASY_TILES_PER_SECOND = 12;
+	inline constexpr double EXTREME_TILES_PER_SECOND = 6;
 	inline constexpr double MIN_SPEED_FACTOR = 0.5;
 	// Instant captures count as taking one tick.
 	inline constexpr double MIN_SECONDS = 1.0 / (double)SERVER_TICK_SPEED;

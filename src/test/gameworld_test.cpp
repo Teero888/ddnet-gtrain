@@ -2022,7 +2022,7 @@ TEST_F(GameWorld, GTrainCapturesEarnEloByDifficultySpeedAndGoalDistance)
 
 	// Instant captures are as fast as it gets.
 	pController->SetMapDifficulty("Hard", 2);
-	EXPECT_EQ(Help(), "A 100 tile goal here earns 170859 points at a typical speed (Hard ★★☆), longer and faster ones more.");
+	EXPECT_EQ(Help(), "Captures here are worth 17.1 times as much as on Easy ★☆☆ maps (Hard ★★☆), longer and faster ones more.");
 	int Tiles = GoalTiles(Runner);
 	ASSERT_GT(Tiles, 0);
 	EXPECT_NE(Capture(Runner).find("(0 fails, " + Gain(Runner, 7, Tiles, 0) + ")."), std::string::npos);
@@ -2282,7 +2282,7 @@ TEST_F(GameWorld, GTrainEloScoreboard)
 	Say(Anna, "/points Runner");
 	ASSERT_TRUE(WaitForDatabase());
 	ASSERT_FALSE(m_pServer->m_avChatMessages[Anna].empty());
-	EXPECT_EQ(m_pServer->m_avChatMessages[Anna].back(), "1. Runner ELO: " + std::to_string(Elo(RunnerPoints)) + " (" + std::to_string(RunnerPoints) + " points), requested by Anna");
+	EXPECT_EQ(m_pServer->m_avChatMessages[Anna].back(), "1. Runner ELO: " + std::to_string(Elo(RunnerPoints)) + ", requested by Anna");
 	m_pServer->AdvanceTicks(10);
 	m_pServer->m_avChatMessages[Anna].clear();
 	Say(Anna, "/top5elo");
@@ -2302,7 +2302,7 @@ TEST_F(GameWorld, GTrainEloScoreboard)
 		ASSERT_TRUE(WaitForDatabase());
 		ASSERT_FALSE(m_pServer->m_avChatMessages[Anna].empty()) << pCommand;
 		const std::string &Profile = m_pServer->m_avChatMessages[Anna].back();
-		EXPECT_TRUE(Profile.starts_with("1. Runner ELO: " + std::to_string(Elo(RunnerPoints)) + " (" + std::to_string(RunnerPoints) + " points), 2 captures, 2 attempts, 0 respawns, ")) << Profile;
+		EXPECT_TRUE(Profile.starts_with("1. Runner ELO: " + std::to_string(Elo(RunnerPoints)) + ", 2 captures, 2 attempts, 0 respawns, ")) << Profile;
 		EXPECT_TRUE(Profile.ends_with(" played, requested by Anna")) << Profile;
 	}
 	m_pServer->AdvanceTicks(10);

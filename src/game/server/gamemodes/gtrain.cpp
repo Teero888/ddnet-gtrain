@@ -175,7 +175,7 @@ void CGameControllerGTrain::SetMapDifficulty(const char *pServer, int Stars)
 {
 	m_EloStep = EloStep(pServer, Stars);
 	if(m_EloStep)
-		log_info("gtrain", "map is %s with %d stars, a 100 tile goal earns %.0f points at a typical speed", pServer, Stars, GTrainElo::REFERENCE_DISTANCE * GTrainElo::PointsPerTile(*m_EloStep));
+		log_info("gtrain", "map is %s with %d stars, captures are worth %.1f times as much as on Easy with one star", pServer, Stars, GTrainElo::PointsPerTile(*m_EloStep) / GTrainElo::PointsPerTile(0));
 	else
 		log_info("gtrain", "map is '%s' with %d stars, captures earn no ELO", pServer, Stars);
 }
@@ -1032,7 +1032,7 @@ void CGameControllerGTrain::Help()
 	log_info("chatresp", "/points or /elo [player]: show ELO, /top5points or /top5elo: the ELO ladder");
 	log_info("chatresp", "/rank or /profile [player]: stats and playtime, /top5captures, /top5attempts, /top5respawns, /top5playtime: their ladders");
 	if(m_EloStep)
-		log_info("chatresp", "A 100 tile goal here earns %.0f points at a typical speed (%s %s), longer and faster ones more.", GTrainElo::REFERENCE_DISTANCE * GTrainElo::PointsPerTile(*m_EloStep),
+		log_info("chatresp", "Captures here are worth %.1f times as much as on Easy ★☆☆ maps (%s %s), longer and faster ones more.", GTrainElo::PointsPerTile(*m_EloStep) / GTrainElo::PointsPerTile(0),
 			s_apEloDifficulties[*m_EloStep / std::size(s_apEloStars)], s_apEloStars[*m_EloStep % std::size(s_apEloStars)]);
 	else
 		log_info("chatresp", "Captures on this map earn no ELO.");

@@ -24,7 +24,7 @@ A server-side [DDNet](https://github.com/ddnet/ddnet) mod for training Gores map
 | `/scorelimit <0-1000>` | Points needed to win a fight (default 10, `0` for no limit) |
 | `/shotgun`, `/grenade`, `/laser`, `/ninja` | Toggle keeping that weapon in every attempt; ninja never runs out |
 | `/freeplay` | Toggle training without flags, paths and captures |
-| `/points`, `/elo [player]` | Show your ELO, points and rank, or another player's |
+| `/points`, `/elo [player]` | Show your ELO and rank, or another player's |
 | `/top5points`, `/top5elo [rank]` | Show five players of the ELO ladder, starting at the rank (1 by default) |
 | `/rank`, `/profile [player]` | Show your [stats](#stats) and playtime, or another player's |
 | `/top5captures`, `/top5attempts`, `/top5respawns`, `/top5playtime [rank]` | Show five players of these ladders |
@@ -34,7 +34,7 @@ A server-side [DDNet](https://github.com/ddnet/ddnet) mod for training Gores map
 
 ## ELO
 
-Every capture earns points, and your ELO shows them on a scale from 0 to 9999. Both only ever grow. They are stored per player name in the server's database, like DDNet points.
+Every capture earns points, and your ELO shows them on a scale from 0 to 9999. Both only ever grow, and players only see the ELO, the points stay internal. They are stored per player name in the server's database, like DDNet points.
 
 - A capture earns points for every tile of the goal's path distance: 100 on Easy maps with one star, and 1.5 times as many for each star or difficulty step above that. These are the points per tile of a 100 tile goal:
 

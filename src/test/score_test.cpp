@@ -721,7 +721,7 @@ TEST_P(Elo, PointsAddUp)
 	AddPoints("nameless tee", 100'000'000);
 	AddPoints("nameless tee", 300'000'000);
 	ASSERT_TRUE(CScoreWorker::ShowElo(m_pConn, &m_PlayerRequest, m_aError, sizeof(m_aError))) << m_aError;
-	const std::string Line = "1. nameless tee ELO: " + EloText(400'000'000) + " (400000000 points), requested by brainless tee";
+	const std::string Line = "1. nameless tee ELO: " + EloText(400'000'000) + ", requested by brainless tee";
 	ExpectLines(m_pPlayerResult, {Line.c_str()}, true);
 	EXPECT_NE(EloText(400'000'000), "0");
 }
@@ -769,7 +769,7 @@ TEST_P(Elo, PointsBeyondInt32)
 	AddPoints("nameless tee", 8'192'000);
 	AddPoints("nameless tee", 3'000'000'000);
 	ASSERT_TRUE(CScoreWorker::ShowElo(m_pConn, &m_PlayerRequest, m_aError, sizeof(m_aError))) << m_aError;
-	const std::string Line = "1. nameless tee ELO: " + EloText(3'008'192'000) + " (3008192000 points), requested by brainless tee";
+	const std::string Line = "1. nameless tee ELO: " + EloText(3'008'192'000) + ", requested by brainless tee";
 	ExpectLines(m_pPlayerResult, {Line.c_str()}, true);
 }
 
@@ -779,7 +779,7 @@ TEST_P(Elo, RanksAndTopByPoints)
 	AddPoints("brainless tee", 3'000'000'000);
 	AddPoints("tee", 1'000'000'000);
 	ASSERT_TRUE(CScoreWorker::ShowElo(m_pConn, &m_PlayerRequest, m_aError, sizeof(m_aError))) << m_aError;
-	const std::string Second = "2. nameless tee ELO: " + EloText(2'000'000'000) + " (2000000000 points), requested by brainless tee";
+	const std::string Second = "2. nameless tee ELO: " + EloText(2'000'000'000) + ", requested by brainless tee";
 	ExpectLines(m_pPlayerResult, {Second.c_str()}, true);
 
 	AddPoints("nameless tee", 1'000'000'000);
@@ -816,7 +816,7 @@ TEST_P(Elo, Profile)
 	AddPoints("brainless tee", 3'000'000'000);
 	Reset();
 	ASSERT_TRUE(CScoreWorker::ShowGTrainProfile(m_pConn, &m_PlayerRequest, m_aError, sizeof(m_aError))) << m_aError;
-	const std::string Line = "2. nameless tee ELO: " + EloText(2'000'000'000) + " (2000000000 points), 12 captures, 34 attempts, 5 respawns, 2h 07m played, requested by brainless tee";
+	const std::string Line = "2. nameless tee ELO: " + EloText(2'000'000'000) + ", 12 captures, 34 attempts, 5 respawns, 2h 07m played, requested by brainless tee";
 	ExpectLines(m_pPlayerResult, {Line.c_str()}, true);
 
 	// Single counts aren't plural.
@@ -827,7 +827,7 @@ TEST_P(Elo, Profile)
 	str_copy(m_PlayerRequest.m_aName, "tee");
 	Reset();
 	ASSERT_TRUE(CScoreWorker::ShowGTrainProfile(m_pConn, &m_PlayerRequest, m_aError, sizeof(m_aError))) << m_aError;
-	ExpectLines(m_pPlayerResult, {"3. tee ELO: 0 (0 points), 1 capture, 1 attempt, 1 respawn, 0h 00m played, requested by brainless tee"}, true);
+	ExpectLines(m_pPlayerResult, {"3. tee ELO: 0, 1 capture, 1 attempt, 1 respawn, 0h 00m played, requested by brainless tee"}, true);
 }
 
 TEST_P(Elo, LaddersOfEveryStat)
