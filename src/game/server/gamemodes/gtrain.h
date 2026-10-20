@@ -37,11 +37,14 @@ class CGameControllerGTrain : public CGameControllerDDNet
 		STATS_SAVE_SECONDS = 60,
 	};
 
-	// centers of all non-freeze tiles between the start and the finish line
+	// centers of all non-freeze tiles between the start and the finish line,
+	// ordered by their path distance to the finish
 	std::vector<vec2> m_vTrainPositions;
 	bool m_aPendingPlace[MAX_CLIENTS];
 	CGTrainPathGraph m_PathGraph;
 	std::vector<int> m_vTileNodes;
+	// path distance of every node to the finish line, -1 without a path
+	std::vector<int> m_vFinishDistances;
 	CGTrainPathfinder m_Pathfinder;
 	struct CAttempt
 	{
@@ -68,6 +71,8 @@ class CGameControllerGTrain : public CGameControllerDDNet
 	{
 		bool m_Freeplay = false;
 		bool m_NoDoubleJump = false;
+		// goals only on a shortest path towards the finish line
+		bool m_Forwards = false;
 		int m_GoalDistance = 0; // 0 uses sv_gtrain_goal_distance
 		int m_ScoreLimit = DEFAULT_SCORE_LIMIT; // 0 disables the limit
 		int m_Weapons = 0; // bit per weapon kept for good
@@ -100,7 +105,10 @@ class CGameControllerGTrain : public CGameControllerDDNet
 
 	void HideUnrelatedChatCommands();
 	void FindTrainPositions();
+	// path nodes beside tiles of this game or front layer index
+	std::vector<int> NodesBeside(int Tile) const;
 	void ExcludeStartArea();
+	int RandomStart(int Group) const;
 	int HoverDoorIndex(int Start, class CCharacter *pChr) const;
 	void DelayHoverDoor(class CCharacter *pChr);
 	void OpenHoverDoor(class CCharacter *pChr);
@@ -160,6 +168,7 @@ public:
 	void Retry(int ClientId);
 	void Distance(int ClientId, std::optional<int> Tiles);
 	void NoDoubleJump(int ClientId);
+	void Forwards(int ClientId);
 	void ScoreLimit(int ClientId, std::optional<int> Limit);
 	void ToggleWeapon(int ClientId, int Weapon);
 	// The settings of the player's group, pName empty for the player itself.

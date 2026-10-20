@@ -193,7 +193,33 @@ void CGTrainPathfinder::FindReachable(const std::vector<int> &vSources, int Dept
 	}
 }
 
-void CGTrainPathfinder::Build(CGTrainGoal &Goal, int Start, int Distance, unsigned Seed)
+void CGTrainPathfinder::FindDistances(const std::vector<int> &vTargets, std::vector<int> &vDistances)
+{
+	vDistances.assign(m_Graph.m_vNodes.size(), -1);
+	m_vQueue.clear();
+	for(const int Target : vTargets)
+	{
+		if(Target < 0 || Target >= (int)m_Graph.m_vNodes.size() || vDistances[Target] >= 0)
+			continue;
+		vDistances[Target] = 0;
+		m_vQueue.push_back(Target);
+	}
+	// Reverse BFS over incoming edges, like BuildField without a depth limit.
+	for(size_t Head = 0; Head < m_vQueue.size(); ++Head)
+	{
+		const int Current = m_vQueue[Head];
+		for(int i = m_Graph.m_vInOffsets[Current]; i < m_Graph.m_vInOffsets[Current + 1]; ++i)
+		{
+			const int Previous = m_Graph.m_vInNodes[i];
+			if(vDistances[Previous] >= 0)
+				continue;
+			vDistances[Previous] = vDistances[Current] + 1;
+			m_vQueue.push_back(Previous);
+		}
+	}
+}
+
+void CGTrainPathfinder::Build(CGTrainGoal &Goal, int Start, int Distance, unsigned Seed, const std::vector<int> *pFinishDistances)
 {
 	Goal.m_Ready = false;
 	Goal.m_Goal = -1;
@@ -209,12 +235,16 @@ void CGTrainPathfinder::Build(CGTrainGoal &Goal, int Start, int Distance, unsign
 	std::mt19937 Random(Seed);
 	int GoalNode = -1;
 	int NumCandidates = 0;
+	// Nodes on a shortest path to the finish are exactly their depth closer
+	// to it than the start.
+	const int StartFinishDistance = pFinishDistances ? (*pFinishDistances)[Start] : -1;
 	// BFS chooses a goal by actual path tile distance, not raw displacement.
 	for(size_t Head = 0; Head < m_vQueue.size(); ++Head)
 	{
 		const int Node = m_vQueue[Head];
 		const int Depth = m_vStates[Node].m_Cost;
-		if(Depth > 0 && m_Graph.m_vNodes[Node].m_Goal)
+		if(Depth > 0 && m_Graph.m_vNodes[Node].m_Goal &&
+			(StartFinishDistance < 0 || (*pFinishDistances)[Node] == StartFinishDistance - Depth))
 		{
 			if(Depth > Goal.m_Distance)
 			{

@@ -99,7 +99,7 @@ bool CGameControllerGTrain::AddSwitchLayer(IStorage *pStorage, const char *pPath
 // practice, and only clutter the chat's command completion.
 static const char *const s_apChatCommands[] = {
 	"help", "cmdlist", "info", "rules", "list",
-	"r", "retry", "fight", "distance", "nodj", "scorelimit", "freeplay", "settings",
+	"r", "retry", "fight", "distance", "nodj", "forwards", "scorelimit", "freeplay", "settings",
 	// practice binds, they retry
 	"invincible", "tc", "telecursor", "rescue", "back", "tp", "teleport", "lasttp",
 	"shotgun", "grenade", "laser", "rifle", "ninja",
@@ -441,10 +441,34 @@ void CGameControllerGTrain::FindTrainPositions()
 		CGTrainPathGraph::AddTileEdges(Index, Width, Height, m_vTileNodes, vStoppers, vEdges);
 	}
 	m_PathGraph.InitEdges(vEdges);
+	m_Pathfinder.FindDistances(NodesBeside(TILE_FINISH), m_vFinishDistances);
 
 	ExcludeStartArea();
+	// Spots far enough from the finish for /forwards are a suffix then.
+	std::stable_sort(m_vTrainPositions.begin(), m_vTrainPositions.end(), [&](vec2 A, vec2 B) {
+		return m_vFinishDistances[PathNode(A)] < m_vFinishDistances[PathNode(B)];
+	});
 	for(vec2 Pos : m_vTrainPositions)
 		m_PathGraph.m_vNodes[PathNode(Pos)].m_Goal = true;
+}
+
+std::vector<int> CGameControllerGTrain::NodesBeside(int Tile) const
+{
+	CCollision *pCollision = GameServer()->Collision();
+	const int Width = pCollision->GetWidth();
+	const int Height = pCollision->GetHeight();
+	std::vector<int> vNodes;
+	for(int Index = 0; Index < Width * Height; ++Index)
+	{
+		if(pCollision->GetTileIndex(Index) != Tile && pCollision->GetFrontTileIndex(Index) != Tile)
+			continue;
+		const int Column = Index % Width;
+		const int Row = Index / Width;
+		for(const int Neighbor : {Column > 0 ? Index - 1 : -1, Column < Width - 1 ? Index + 1 : -1, Row > 0 ? Index - Width : -1, Row < Height - 1 ? Index + Width : -1})
+			if(Neighbor >= 0 && m_vTileNodes[Neighbor] >= 0)
+				vNodes.push_back(m_vTileNodes[Neighbor]);
+	}
+	return vNodes;
 }
 
 void CGameControllerGTrain::ExcludeStartArea()
@@ -454,23 +478,9 @@ void CGameControllerGTrain::ExcludeStartArea()
 	const int Distance = g_Config.m_SvGtrainStartExclusion;
 	if(Distance <= 0 || m_vTrainPositions.empty())
 		return;
-	CCollision *pCollision = GameServer()->Collision();
-	const int Width = pCollision->GetWidth();
-	const int Height = pCollision->GetHeight();
-	std::vector<int> vBesideStart;
-	for(int Index = 0; Index < Width * Height; ++Index)
-	{
-		if(pCollision->GetTileIndex(Index) != TILE_START && pCollision->GetFrontTileIndex(Index) != TILE_START)
-			continue;
-		const int Column = Index % Width;
-		const int Row = Index / Width;
-		for(const int Neighbor : {Column > 0 ? Index - 1 : -1, Column < Width - 1 ? Index + 1 : -1, Row > 0 ? Index - Width : -1, Row < Height - 1 ? Index + Width : -1})
-			if(Neighbor >= 0 && m_vTileNodes[Neighbor] >= 0)
-				vBesideStart.push_back(m_vTileNodes[Neighbor]);
-	}
 	// Tiles beside the start line are already one tile away from it.
 	std::vector<int> vNearStart;
-	m_Pathfinder.FindReachable(vBesideStart, Distance - 1, vNearStart);
+	m_Pathfinder.FindReachable(NodesBeside(TILE_START), Distance - 1, vNearStart);
 	std::vector<bool> vExcluded(m_PathGraph.m_vNodes.size(), false);
 	for(const int Node : vNearStart)
 		vExcluded[Node] = true;
@@ -487,6 +497,23 @@ void CGameControllerGTrain::ExcludeStartArea()
 	m_vTrainPositions = std::move(vRemaining);
 }
 
+int CGameControllerGTrain::RandomStart(int Group) const
+{
+	// Forward goals have their full distance from spots at least that far
+	// from the finish, so the others are skipped. Maps shorter than that use
+	// their spots farthest from the finish.
+	auto Begin = m_vTrainPositions.begin();
+	const CSettings &Settings = m_aSettings[Group];
+	if(Settings.m_Forwards && !Settings.m_Freeplay)
+	{
+		const int MinDistance = std::min(GoalDistance(Group), m_vFinishDistances[PathNode(m_vTrainPositions.back())]);
+		Begin = std::partition_point(Begin, m_vTrainPositions.end(), [&](vec2 Pos) {
+			return m_vFinishDistances[PathNode(Pos)] < MinDistance;
+		});
+	}
+	return PathNode(Begin[secure_rand_below((int)(m_vTrainPositions.end() - Begin))]);
+}
+
 void CGameControllerGTrain::PlaceRandomly(CPlayer *pPlayer)
 {
 	const int ClientId = pPlayer->GetCid();
@@ -496,17 +523,16 @@ void CGameControllerGTrain::PlaceRandomly(CPlayer *pPlayer)
 		return;
 	}
 
-	const vec2 Pos = m_vTrainPositions[secure_rand_below(m_vTrainPositions.size())];
 	CAttempt &Attempt = m_aAttempts[ClientId];
 	if(Attempt.m_pGoal.use_count() != 1)
 		Attempt.m_pGoal = std::make_shared<CGTrainGoal>();
-	const int Start = PathNode(Pos);
 	const int Group = m_aFightGroup[ClientId];
+	const int Start = RandomStart(Group);
 	const int TargetDistance = GoalDistance(Group);
 	if(m_aSettings[Group].m_Freeplay)
 		*Attempt.m_pGoal = CGTrainGoal();
 	else
-		m_Pathfinder.Build(*Attempt.m_pGoal, Start, TargetDistance, secure_rand_below(1 << 30));
+		m_Pathfinder.Build(*Attempt.m_pGoal, Start, TargetDistance, secure_rand_below(1 << 30), m_aSettings[Group].m_Forwards ? &m_vFinishDistances : nullptr);
 	PlaceForAttempt(pPlayer, Attempt.m_pGoal, Start, TargetDistance, false);
 }
 
@@ -723,7 +749,7 @@ void CGameControllerGTrain::RestartFight(int Group)
 	m_aFightRestart[Group] = false;
 	if(m_vTrainPositions.empty())
 		return;
-	const int Start = PathNode(m_vTrainPositions[secure_rand_below(m_vTrainPositions.size())]);
+	const int Start = RandomStart(Group);
 	const int TargetDistance = GoalDistance(Group);
 	// All owners of this goal belong to the resetting group. Build it once,
 	// then share it while keeping timers local to each player.
@@ -733,7 +759,7 @@ void CGameControllerGTrain::RestartFight(int Group)
 	if(m_aSettings[Group].m_Freeplay)
 		*pGoal = CGTrainGoal();
 	else
-		m_Pathfinder.Build(*pGoal, Start, TargetDistance, secure_rand_below(1 << 30));
+		m_Pathfinder.Build(*pGoal, Start, TargetDistance, secure_rand_below(1 << 30), m_aSettings[Group].m_Forwards ? &m_vFinishDistances : nullptr);
 	m_SyncFightDeaths = true;
 	for(int ClientId = 0; ClientId < MAX_CLIENTS; ++ClientId)
 	{
@@ -951,6 +977,16 @@ void CGameControllerGTrain::NoDoubleJump(int ClientId)
 	SendFightChat(ClientId, NoDoubleJump ? "Attempts now start without double jump. Touching the ground gives it back." : "Attempts now start with double jump.");
 }
 
+void CGameControllerGTrain::Forwards(int ClientId)
+{
+	if(!GameServer()->m_apPlayers[ClientId] || !CheckFightLeader(ClientId, "toggle /forwards"))
+		return;
+	// The current goal stays, so retries keep their direction.
+	bool &Forwards = m_aSettings[ClientId].m_Forwards;
+	Forwards = !Forwards;
+	SendFightChat(ClientId, Forwards ? "New goals only lead towards the finish line." : "New goals lead in any direction again.");
+}
+
 void CGameControllerGTrain::ScoreLimit(int ClientId, std::optional<int> Limit)
 {
 	if(!GameServer()->m_apPlayers[ClientId])
@@ -1049,9 +1085,9 @@ void CGameControllerGTrain::ShowSettings(int ClientId, const char *pName)
 	if(Settings.m_ScoreLimit > 0)
 		str_format(aScoreLimit, sizeof(aScoreLimit), "%d", Settings.m_ScoreLimit);
 	char aMessage[256];
-	str_format(aMessage, sizeof(aMessage), "%s: /distance %d%s, /nodj %s, /freeplay %s, /scorelimit %s, kept weapons: %s",
+	str_format(aMessage, sizeof(aMessage), "%s: /distance %d%s, /nodj %s, /forwards %s, /freeplay %s, /scorelimit %s, kept weapons: %s",
 		aWhose, GoalDistance(Group), Settings.m_GoalDistance ? "" : " (server default)", Settings.m_NoDoubleJump ? "on" : "off",
-		Settings.m_Freeplay ? "on" : "off", aScoreLimit, aWeapons[0] ? aWeapons : "none");
+		Settings.m_Forwards ? "on" : "off", Settings.m_Freeplay ? "on" : "off", aScoreLimit, aWeapons[0] ? aWeapons : "none");
 	GameServer()->SendChatTarget(ClientId, aMessage);
 }
 
@@ -1063,6 +1099,7 @@ void CGameControllerGTrain::Help()
 	log_info("chatresp", "/fight <player>: join a player's fight, /fight alone leaves it");
 	log_info("chatresp", "/distance <%d-%d>: goal distance in tiles, 0 for the server default", (int)MIN_GOAL_DISTANCE, (int)MAX_GOAL_DISTANCE);
 	log_info("chatresp", "/nodj: toggle starting attempts without double jump");
+	log_info("chatresp", "/forwards: toggle goals only leading towards the finish line");
 	log_info("chatresp", "/scorelimit <0-%d>: points to win a fight, 0 for no limit", (int)MAX_SCORE_LIMIT);
 	log_info("chatresp", "/shotgun, /grenade, /laser, /ninja: toggle keeping that weapon");
 	log_info("chatresp", "/freeplay: toggle training without flags and paths");

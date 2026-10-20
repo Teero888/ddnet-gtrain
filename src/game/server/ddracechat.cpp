@@ -1208,6 +1208,20 @@ void CGameContext::ConNoDoubleJump(IConsole::IResult *pResult, void *pUserData)
 	pController->NoDoubleJump(pResult->m_ClientId);
 }
 
+void CGameContext::ConForwards(IConsole::IResult *pResult, void *pUserData)
+{
+	CGameContext *pSelf = (CGameContext *)pUserData;
+	if(!CheckClientId(pResult->m_ClientId) || !pSelf->m_apPlayers[pResult->m_ClientId])
+		return;
+	auto *pController = dynamic_cast<CGameControllerGTrain *>(pSelf->m_pController);
+	if(!pController)
+	{
+		pSelf->SendChatTarget(pResult->m_ClientId, "/forwards is only available in GTrain.");
+		return;
+	}
+	pController->Forwards(pResult->m_ClientId);
+}
+
 void CGameContext::ConScoreLimit(IConsole::IResult *pResult, void *pUserData)
 {
 	CGameContext *pSelf = (CGameContext *)pUserData;

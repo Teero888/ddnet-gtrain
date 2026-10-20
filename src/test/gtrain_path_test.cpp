@@ -310,6 +310,57 @@ TEST(GTrainPath, StoppersBlockRoutesAgainstTheirDirection)
 	EXPECT_EQ(vRoute, (std::vector<int>{0, 2, 3}));
 }
 
+TEST(GTrainPath, ForwardGoalsLeadTowardsTheFinish)
+{
+	// The finish is beside the right column of a 9x3 room.
+	const auto Graph = Grid(9, 3);
+	CGTrainPathfinder Finder(Graph);
+	std::vector<int> vDistances;
+	Finder.FindDistances({8, 17, 26, 17, -1}, vDistances);
+	EXPECT_EQ(vDistances[17], 0);
+	EXPECT_EQ(vDistances[13], 4);
+	EXPECT_EQ(vDistances[0], 8);
+
+	// From the middle, goals 3 tiles away lie on both sides, forward ones
+	// only on the finish's side, including diagonally.
+	const int Start = 13;
+	bool Backwards = false;
+	for(unsigned Seed = 0; Seed < 64; ++Seed)
+	{
+		CGTrainGoal Goal;
+		Finder.Build(Goal, Start, 3, Seed);
+		Backwards |= Goal.m_Goal % 9 < 4;
+		Finder.Build(Goal, Start, 3, Seed, &vDistances);
+		ASSERT_TRUE(Goal.m_Ready);
+		EXPECT_EQ(Goal.m_Distance, 3);
+		EXPECT_EQ(Goal.m_Goal % 9, 7);
+		EXPECT_EQ(vDistances[Goal.m_Goal], vDistances[Start] - 3);
+	}
+	EXPECT_TRUE(Backwards);
+
+	// Close to the finish, forward goals are shorter.
+	CGTrainGoal Goal;
+	Finder.Build(Goal, 15, 5, 1, &vDistances);
+	ASSERT_TRUE(Goal.m_Ready);
+	EXPECT_EQ(Goal.m_Distance, 2);
+	EXPECT_EQ(Goal.m_Goal % 9, 8);
+
+	// Distances follow directed edges. Starts without a path to the finish
+	// allow every goal.
+	CGTrainPathGraph Teleport;
+	for(int i = 0; i < 4; ++i)
+		Teleport.m_vNodes.push_back({vec2(i * 320, 16), true});
+	Teleport.InitEdges({{0, {3, 0}}, {3, {2, 1}}, {1, {0, 2}}});
+	CGTrainPathfinder TeleportFinder(Teleport);
+	TeleportFinder.FindDistances({2}, vDistances);
+	EXPECT_EQ(vDistances, (std::vector<int>{2, 3, 0, 1}));
+	TeleportFinder.FindDistances({1}, vDistances);
+	EXPECT_EQ(vDistances, (std::vector<int>{-1, 0, -1, -1}));
+	TeleportFinder.Build(Goal, 0, 2, 1, &vDistances);
+	ASSERT_TRUE(Goal.m_Ready);
+	EXPECT_EQ(Goal.m_Goal, 2);
+}
+
 TEST(GTrainPath, ReachableNodesWithinDepth)
 {
 	// Sources count as distance zero, duplicates and invalid sources are skipped.

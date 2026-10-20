@@ -21,6 +21,7 @@ A server-side [DDNet](https://github.com/ddnet/ddnet) mod for training Gores map
 | `/fight <player>` | Join a player's fight; `/fight` alone leaves it |
 | `/distance <50-500>` | Your goal distance in tiles; `0` uses the server default |
 | `/nodj` | Toggle starting attempts without double jump; touching the ground gives it back |
+| `/forwards` | Toggle goals that only lead towards the finish line, see [below](#forwards) |
 | `/scorelimit <0-1000>` | Points needed to win a fight (default 10, `0` for no limit) |
 | `/shotgun`, `/grenade`, `/laser`, `/ninja` | Toggle keeping that weapon in every attempt; ninja never runs out |
 | `/freeplay` | Toggle training without flags, paths and captures |
@@ -32,6 +33,10 @@ A server-side [DDNet](https://github.com/ddnet/ddnet) mod for training Gores map
 | `/help` | List these commands |
 
 `/distance` and `/scorelimit` show the current value without an argument. In a fight, only the leader can change these settings, and they apply to the whole group. Leaving a fight keeps its settings, and joining one adopts its settings, including removing weapons it has disabled.
+
+### Forwards
+
+Goals normally lead in any direction from your spot, also back towards the start. With `/forwards`, every goal lies on a shortest path from your spot to the finish line, so each run goes the way the map is played. Spots closer to the finish than your goal distance are skipped then, so goals keep their full distance; on maps shorter than it, goals lead from the spots farthest from the finish. Like `/distance`, it applies to new goals, and retries keep the current one.
 
 ## ELO
 

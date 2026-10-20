@@ -2420,7 +2420,7 @@ TEST_F(GameWorld, GTrainChatOnlyHasGTrainCommands)
 	// Races, teams and practice have no use in GTrain.
 	for(const char *pName : {"team", "practice", "save", "load", "kill", "times", "swap", "solo", "weapons", "unlaser", "tpxy"})
 		EXPECT_FALSE(IsChatCommand(pName)) << pName;
-	for(const char *pName : {"r", "retry", "fight", "distance", "settings", "laser", "rifle", "top5", "rank", "profile", "top5playtime", "spec", "pause", "w", "help", "cmdlist", "map", "timeout"})
+	for(const char *pName : {"r", "retry", "fight", "distance", "forwards", "settings", "laser", "rifle", "top5", "rank", "profile", "top5playtime", "spec", "pause", "w", "help", "cmdlist", "map", "timeout"})
 		EXPECT_TRUE(IsChatCommand(pName)) << pName;
 	// Practice binds stay, they retry.
 	for(const char *pName : {"invincible", "tc", "telecursor", "rescue", "back", "tp", "teleport", "lasttp"})
@@ -2442,10 +2442,10 @@ TEST_F(GameWorld, GTrainSettingsShowsThoseOfPlayersAndFights)
 		return m_pServer->m_avChatMessages[ClientId].empty() ? std::string() : m_pServer->m_avChatMessages[ClientId].back();
 	};
 
-	EXPECT_EQ(Settings(Anna, "/settings"), "Your settings: /distance 3 (server default), /nodj off, /freeplay off, /scorelimit 10, kept weapons: none");
-	for(const char *pCommand : {"/distance 120", "/nodj", "/ninja", "/shotgun", "/scorelimit 0"})
+	EXPECT_EQ(Settings(Anna, "/settings"), "Your settings: /distance 3 (server default), /nodj off, /forwards off, /freeplay off, /scorelimit 10, kept weapons: none");
+	for(const char *pCommand : {"/distance 120", "/nodj", "/forwards", "/ninja", "/shotgun", "/scorelimit 0"})
 		Say(Anna, pCommand);
-	const std::string AnnaSettings = "/distance 120, /nodj on, /freeplay off, /scorelimit off, kept weapons: shotgun, ninja";
+	const std::string AnnaSettings = "/distance 120, /nodj on, /forwards on, /freeplay off, /scorelimit off, kept weapons: shotgun, ninja";
 	EXPECT_EQ(Settings(Anna, "/settings"), "Your settings: " + AnnaSettings);
 	EXPECT_EQ(Settings(Runner, "/settings Anna"), "Settings of 'Anna': " + AnnaSettings);
 	EXPECT_EQ(Settings(Runner, "/settings Nobody"), "Player not found. Use their full name.");
@@ -2689,6 +2689,66 @@ TEST_F(GameWorld, GTrainNoDoubleJumpStartsAttemptsWithoutAirJump)
 	EXPECT_EQ(GameServer()->GetPlayerChar(Bob)->Core()->m_Jumped, 0);
 }
 
+TEST_F(GameWorld, GTrainForwardsGoalsLeadTowardsTheFinish)
+{
+	PrepareTrainingCorridor();
+	const auto vIds = SpawnTrainingPlayers({"Anna", "Bob"});
+	const int Anna = vIds[0], Bob = vIds[1];
+	auto *pController = static_cast<CGameControllerGTrain *>(GameServer()->m_pController);
+	const auto Command = [&](int ClientId, const char *pCommand) {
+		m_pServer->m_avChatMessages[ClientId].clear();
+		m_pServer->Console()->ExecuteLineFlag(pCommand, CFGFLAG_CHAT, ClientId);
+		return m_pServer->m_avChatMessages[ClientId].empty() ? std::string() : m_pServer->m_avChatMessages[ClientId].back();
+	};
+	const auto NewAttempt = [&](int ClientId) {
+		GameServer()->m_apPlayers[ClientId]->KillCharacter(WEAPON_SELF);
+		GameServer()->m_apPlayers[ClientId]->ForceSpawn(vec2(80, 80));
+		pController->Tick();
+	};
+	// The finish is on the right of the corridor.
+	const auto SpotX = [&](int ClientId) { return (int)GameServer()->GetPlayerChar(ClientId)->m_Pos.x / 32; };
+	const auto GoalOffset = [&](int ClientId) { return (int)TrainingGoal(ClientId).x / 32 - SpotX(ClientId); };
+	const int FinishX = GameServer()->Collision()->GetWidth() - 2;
+
+	bool Backwards = false;
+	for(int i = 0; i < 100 && !Backwards; ++i)
+	{
+		NewAttempt(Anna);
+		Backwards = GoalOffset(Anna) < 0;
+	}
+	EXPECT_TRUE(Backwards);
+
+	// Spots closer to the finish than the goal distance are skipped, the
+	// tiles beside it are 0 tiles away.
+	EXPECT_EQ(Command(Anna, "forwards"), "New goals only lead towards the finish line.");
+	for(int i = 0; i < 100; ++i)
+	{
+		NewAttempt(Anna);
+		EXPECT_EQ(GoalOffset(Anna), 3);
+		EXPECT_LE(SpotX(Anna), FinishX - 1 - 3);
+	}
+
+	// The corridor is shorter than 50 tiles, so every goal leads from its
+	// farthest spot to the finish.
+	Command(Anna, "distance 50");
+	NewAttempt(Anna);
+	EXPECT_EQ(SpotX(Anna), 2);
+	EXPECT_EQ((int)TrainingGoal(Anna).x / 32, FinishX - 1);
+	Command(Anna, "distance 0");
+
+	// In a fight, the leader's setting applies to everyone.
+	pController->Fight(Bob, "Anna");
+	pController->Tick();
+	EXPECT_EQ(Command(Bob, "forwards"), "Only the fight leader can toggle /forwards.");
+	for(int i = 0; i < 20; ++i)
+	{
+		NewAttempt(Anna);
+		EXPECT_EQ(GoalOffset(Bob), 3);
+	}
+	EXPECT_EQ(Command(Anna, "forwards"), "New goals lead in any direction again.");
+	EXPECT_EQ(m_pServer->m_avChatMessages[Bob].back(), "New goals lead in any direction again.");
+}
+
 TEST_F(GameWorld, GTrainScoreLimitEndsTheFight)
 {
 	PrepareTrainingCorridor();
@@ -2760,13 +2820,13 @@ TEST_F(GameWorld, GTrainHelpListsOnlyGTrainCommands)
 	m_pServer->m_avChatMessages[Runner].clear();
 	Say(Runner, "/help");
 	const auto &vMessages = m_pServer->m_avChatMessages[Runner];
-	ASSERT_EQ(vMessages.size(), 14);
+	ASSERT_EQ(vMessages.size(), 15);
 	EXPECT_EQ(vMessages.front(), "GTrain commands:");
 	EXPECT_EQ(vMessages.back(), "Captures on this map earn no ELO.");
 	std::string Help;
 	for(const auto &Message : vMessages)
 		Help += Message + "\n";
-	for(const char *pCommand : {"Kill:", "/r ", "/retry", "/fight", "/distance", "/nodj", "/scorelimit", "/shotgun", "/grenade", "/laser", "/ninja", "/freeplay", "/settings", "/points", "/elo", "/top5points", "/top5elo", "/rank", "/profile", "/top5captures", "/top5attempts", "/top5respawns", "/top5playtime"})
+	for(const char *pCommand : {"Kill:", "/r ", "/retry", "/fight", "/distance", "/nodj", "/forwards", "/scorelimit", "/shotgun", "/grenade", "/laser", "/ninja", "/freeplay", "/settings", "/points", "/elo", "/top5points", "/top5elo", "/rank", "/profile", "/top5captures", "/top5attempts", "/top5respawns", "/top5playtime"})
 		EXPECT_NE(Help.find(pCommand), std::string::npos) << pCommand;
 	for(const char *pOther : {"/cmdlist", "/practice", "/team", "/rescue"})
 		EXPECT_EQ(Help.find(pOther), std::string::npos) << pOther;

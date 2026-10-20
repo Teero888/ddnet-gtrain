@@ -92,11 +92,17 @@ public:
 		MAX_FIELD_DEPTH = CGTrainGoal::NO_DISTANCE - 1,
 	};
 	explicit CGTrainPathfinder(const CGTrainPathGraph &Graph);
-	void Build(CGTrainGoal &Goal, int Start, int Distance, unsigned Seed);
+	// With pFinishDistances from FindDistances, goals must lie on a shortest
+	// path from Start to the finish, so they are ahead of it. Starts without
+	// a path to the finish allow every goal.
+	void Build(CGTrainGoal &Goal, int Start, int Distance, unsigned Seed, const std::vector<int> *pFinishDistances = nullptr);
 	void BuildField(CGTrainGoal &Goal, int Node, int Depth);
 	bool FindPath(const CGTrainGoal &Goal, int Start, std::vector<int> &vRoute) const;
 	// Every node within Depth steps of any source, sources included.
 	void FindReachable(const std::vector<int> &vSources, int Depth, std::vector<int> &vReachable);
+	// Path distance from every node to the nearest target, 0 for targets and
+	// -1 without a path to one.
+	void FindDistances(const std::vector<int> &vTargets, std::vector<int> &vDistances);
 };
 
 #endif // GAME_SERVER_GAMEMODES_GTRAIN_PATH_H
