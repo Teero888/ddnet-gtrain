@@ -384,6 +384,12 @@ void CGameContext::ConTop(IConsole::IResult *pResult, void *pUserData)
 	CGameContext *pSelf = (CGameContext *)pUserData;
 	if(!CheckClientId(pResult->m_ClientId))
 		return;
+	// GTrain has no race times, its top players have the most ELO.
+	if(dynamic_cast<CGameControllerGTrain *>(pSelf->m_pController))
+	{
+		ConTopElo(pResult, pUserData);
+		return;
+	}
 
 	if(g_Config.m_SvHideScore)
 	{

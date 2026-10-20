@@ -98,10 +98,12 @@ class CGameControllerGTrain : public CGameControllerDDNet
 	char m_aaStatsNames[MAX_CLIENTS][MAX_NAME_LENGTH] = {};
 	int m_aPlaytimeTicks[MAX_CLIENTS] = {};
 
+	void HideUnrelatedChatCommands();
 	void FindTrainPositions();
 	void ExcludeStartArea();
 	int HoverDoorIndex(int Start, class CCharacter *pChr) const;
 	void DelayHoverDoor(class CCharacter *pChr);
+	void OpenHoverDoor(class CCharacter *pChr);
 	void PlaceRandomly(class CPlayer *pPlayer);
 	// Deletes the player's character if it played already, see the definition.
 	void PlaceForAttempt(class CPlayer *pPlayer, const std::shared_ptr<CGTrainGoal> &pGoal, int Start, int TargetDistance, bool Retry);

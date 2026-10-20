@@ -459,6 +459,20 @@ TEST_F(GameWorld, GTrainHoverDoorHoldsTheTeeUntilTheRelease)
 	Release(pChr);
 	EXPECT_EQ(pChr->Core()->m_Jumped & 2, 2);
 
+	// Hovers ending early, like on an unfreeze tile, open the door at once.
+	m_pServer->Console()->ExecuteLineFlag("r", CFGFLAG_CHAT, Runner);
+	pChr = GameServer()->GetPlayerChar(Runner);
+	ASSERT_EQ(Doors(Runner).size(), 1u);
+	pChr->Unfreeze();
+	m_pServer->AdvanceTicks(1);
+	GameServer()->OnTick();
+	EXPECT_FALSE(GameServer()->Switchers()[DoorSwitch].m_aStatus[pChr->Team()]);
+	EXPECT_TRUE(Doors(Runner).empty());
+	const float EarlyY = pChr->m_Pos.y;
+	m_pServer->AdvanceTicks(1);
+	GameServer()->OnTick();
+	EXPECT_GT(pChr->m_Pos.y, EarlyY); // falling freely
+
 	// Without room for a door the zero gravity hover remains.
 	auto *pFront = static_cast<CTile *>(pLayers->Map()->GetData(pLayers->FrontLayer()->m_Front));
 	pFront[pCollision->GetPureMapIndex(pChr->m_Pos) + pCollision->GetWidth()].m_Index = TILE_DEATH;
@@ -635,6 +649,7 @@ TEST_F(GameWorld, GTrainTeamAndPracticeCommandsPreserveFight)
 {
 	PrepareTrainingCorridor();
 	g_Config.m_SvPractice = 1;
+	g_Config.m_SvSpamprotection = 0;
 	const auto vIds = SpawnTrainingPlayers({"Anna", "Bob"});
 	const int Anna = vIds[0], Bob = vIds[1];
 	auto *pController = static_cast<CGameControllerGTrain *>(GameServer()->m_pController);
@@ -648,12 +663,13 @@ TEST_F(GameWorld, GTrainTeamAndPracticeCommandsPreserveFight)
 	{
 		const int PhysicalTeam = GameServer()->GetDDRaceTeam(ClientId);
 		m_pServer->m_avChatMessages[ClientId].clear();
-		for(const char *pCommand : {"team", "team 0", "team 1", "practice", "practice 1", "practice 0"})
-			m_pServer->Console()->ExecuteLineFlag(pCommand, CFGFLAG_CHAT, ClientId);
+		// Chat replies to unknown commands, which these are in GTrain.
+		for(const char *pCommand : {"/team", "/team 0", "/team 1", "/practice", "/practice 1", "/practice 0"})
+			Say(ClientId, pCommand);
 		const auto &vMessages = m_pServer->m_avChatMessages[ClientId];
 		ASSERT_EQ(vMessages.size(), 6);
-		EXPECT_EQ(vMessages[0], "/team is disabled in GTrain. Use /fight to join a fight group.");
-		EXPECT_EQ(vMessages[3], "/practice is disabled in GTrain.");
+		EXPECT_EQ(vMessages[0], "No such command: team. Use /cmdlist for a list of all commands.");
+		EXPECT_EQ(vMessages[3], "No such command: practice. Use /cmdlist for a list of all commands.");
 		pController->Tick();
 		ASSERT_NE(GameServer()->GetPlayerChar(ClientId), nullptr);
 		EXPECT_EQ(GameServer()->GetPlayerChar(ClientId)->m_Pos, Position);
@@ -2318,12 +2334,62 @@ TEST_F(GameWorld, GTrainEloScoreboard)
 	EXPECT_EQ(vTop[0], "-------- Top Captures --------");
 	EXPECT_EQ(vTop[1], "1. Runner Captures: 2");
 	EXPECT_EQ(vTop[2], "2. Bob Captures: 1");
+	// /top5 has no race times to show either.
+	m_pServer->AdvanceTicks(10);
+	m_pServer->m_avChatMessages[Anna].clear();
+	Say(Anna, "/top5");
+	ASSERT_TRUE(WaitForDatabase());
+	ASSERT_EQ(vTop.size(), 4u);
+	EXPECT_EQ(vTop[0], "-------- Top ELO --------");
+	EXPECT_EQ(vTop[1], "1. Runner ELO: " + std::to_string(Elo(RunnerPoints)));
 
 	// ELO stops at its maximum.
 	AddPoints("Anna", 1'000'000'000'000'000);
 	pController->LoadStats(Anna);
 	ASSERT_TRUE(WaitForDatabase());
 	EXPECT_EQ(Score(Anna), GTrainElo::MAX_ELO);
+}
+
+TEST_F(GameWorld, GTrainChatOnlyHasGTrainCommands)
+{
+	IConsole *pConsole = m_pServer->Console();
+	const auto IsChatCommand = [&](const char *pName) { return pConsole->GetCommandInfo(pName, CFGFLAG_CHAT, false) != nullptr; };
+	ASSERT_TRUE(IsChatCommand("team"));
+	ASSERT_TRUE(IsChatCommand("invincible"));
+	PrepareTrainingCorridor();
+	// Races, teams and practice have no use in GTrain.
+	for(const char *pName : {"team", "practice", "save", "load", "invincible", "tc", "telecursor", "rescue", "kill", "times", "settings", "swap", "teleport", "solo", "weapons", "unlaser"})
+		EXPECT_FALSE(IsChatCommand(pName)) << pName;
+	for(const char *pName : {"r", "retry", "fight", "distance", "laser", "rifle", "top5", "rank", "profile", "top5playtime", "spec", "pause", "w", "help", "cmdlist", "map", "timeout"})
+		EXPECT_TRUE(IsChatCommand(pName)) << pName;
+	// Rcon keeps them.
+	EXPECT_NE(pConsole->GetCommandInfo("team", CFGFLAG_SERVER, false), nullptr);
+}
+
+TEST_F(GameWorld, GTrainNeverPlacesOnUnfreezeTiles)
+{
+	// Unfreeze tiles would end the hover right away.
+	PrepareTrainingCorridor();
+	CCollision *pCollision = GameServer()->Collision();
+	for(int x = 10; x <= 20; ++x)
+		pCollision->SetCollisionAt(x * 32 + 16, 80, TILE_UNFREEZE);
+	delete GameServer()->m_pController;
+	GameServer()->m_pController = new CGameControllerGTrain(GameServer());
+	const int Runner = SpawnTrainingPlayers({"Runner"})[0];
+	const auto OnUnfreeze = [](vec2 Pos) { return Pos.x >= 10 * 32 && Pos.x < 21 * 32; };
+	bool FoundBehind = false;
+	for(int Attempt = 0; Attempt < 200; ++Attempt)
+	{
+		const vec2 Start = GameServer()->GetPlayerChar(Runner)->m_Pos;
+		ASSERT_FALSE(OnUnfreeze(Start)) << Start.x;
+		ASSERT_FALSE(OnUnfreeze(TrainingGoal(Runner))) << TrainingGoal(Runner).x;
+		FoundBehind |= Start.x > 21 * 32;
+		GameServer()->m_apPlayers[Runner]->KillCharacter(WEAPON_SELF);
+		GameServer()->m_apPlayers[Runner]->ForceSpawn(vec2(80, 80));
+		GameServer()->m_pController->Tick();
+	}
+	// The tiles still belong to the path.
+	EXPECT_TRUE(FoundBehind);
 }
 
 TEST_F(GameWorld, GTrainSkipsTheStartOfTheMap)

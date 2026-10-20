@@ -17,7 +17,7 @@ A server-side [DDNet](https://github.com/ddnet/ddnet) mod for training Gores map
 | Command | Description |
 | --- | --- |
 | Kill | New random spot and flag |
-| `/r`, `/retry` | Retry the current spot and flag (`/tc`, `/telecursor` and `/invincible` work too) |
+| `/r`, `/retry` | Retry the current spot and flag |
 | `/fight <player>` | Join a player's fight; `/fight` alone leaves it |
 | `/distance <50-500>` | Your goal distance in tiles; `0` uses the server default |
 | `/nodj` | Toggle starting attempts without double jump; touching the ground gives it back |
@@ -25,7 +25,7 @@ A server-side [DDNet](https://github.com/ddnet/ddnet) mod for training Gores map
 | `/shotgun`, `/grenade`, `/laser`, `/ninja` | Toggle keeping that weapon in every attempt; ninja never runs out |
 | `/freeplay` | Toggle training without flags, paths and captures |
 | `/points`, `/elo [player]` | Show your ELO and rank, or another player's |
-| `/top5points`, `/top5elo [rank]` | Show five players of the ELO ladder, starting at the rank (1 by default) |
+| `/top5`, `/top5points`, `/top5elo [rank]` | Show five players of the ELO ladder, starting at the rank (1 by default) |
 | `/rank`, `/profile [player]` | Show your [stats](#stats) and playtime, or another player's |
 | `/top5captures`, `/top5attempts`, `/top5respawns`, `/top5playtime [rank]` | Show five players of these ladders |
 | `/help` | List these commands |
@@ -98,7 +98,7 @@ Build the server as described in the [DDNet building guide](docs/BUILDING.md) an
 ./DDNet-Server "sv_map <map>"
 ```
 
-`sv_gametype` defaults to `gtrain`. The mod forces `sv_solo_server 1` and `sv_kill_delay 0`, and disables `/team` and `/practice` to keep fights intact.
+`sv_gametype` defaults to `gtrain`. The mod forces `sv_solo_server 1` and `sv_kill_delay 0`. Chat commands for races, teams and practice, like `/team`, `/practice` or `/save`, are removed from the chat and its command completion; rcon keeps them.
 
 | Setting | Default | Description |
 | --- | --- | --- |

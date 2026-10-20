@@ -21,6 +21,7 @@
 
 #include <algorithm>
 #include <iterator>
+#include <string>
 
 #define GAME_TYPE_NAME "GTrain"
 #define TEST_TYPE_NAME "TestGTrain"
@@ -55,6 +56,7 @@ CGameControllerGTrain::CGameControllerGTrain(class CGameContext *pGameServer) :
 		std::fill(std::begin(Switcher.m_aStatus), std::end(Switcher.m_aStatus), false);
 	}
 
+	HideUnrelatedChatCommands();
 	FindTrainPositions();
 	Teams().SetScoreboardTeams(m_aScoreboardTeams);
 }
@@ -150,6 +152,34 @@ bool CGameControllerGTrain::AddSwitchLayer(IStorage *pStorage, const char *pPath
 	Writer.Finish();
 	str_copy(pNewPath, aTemp, NewPathSize);
 	return true;
+}
+
+// Chat commands GTrain has a use for. The others are about races, teams and
+// practice, and only clutter the chat's command completion.
+static const char *const s_apChatCommands[] = {
+	"help", "cmdlist", "info", "rules", "list",
+	"r", "retry", "fight", "distance", "nodj", "scorelimit", "freeplay",
+	"shotgun", "grenade", "laser", "rifle", "ninja",
+	"points", "elo", "rank", "profile", "top", "top5", "top5points", "top5elo",
+	"top5captures", "top5attempts", "top5respawns", "top5playtime",
+	"map", "mapinfo", "timeout", "timer",
+	"pause", "spec", "specteam", "pausevoted", "specvoted", "showothers", "showall", "ninjajetpack",
+	"w", "whisper", "c", "converse", "whispers", "dnd", "emote", "eyeemote"};
+
+void CGameControllerGTrain::HideUnrelatedChatCommands()
+{
+	// Without the chat flag, they neither run from chat nor get sent to
+	// clients. Rcon keeps the commands it has access to.
+	IConsole *pConsole = GameServer()->Console();
+	std::vector<std::string> vUnrelated;
+	for(const IConsole::ICommandInfo *pCmd = pConsole->FirstCommandInfo(IConsole::CLIENT_ID_UNSPECIFIED, CFGFLAG_CHAT); pCmd;
+		pCmd = pConsole->NextCommandInfo(pCmd, IConsole::CLIENT_ID_UNSPECIFIED, CFGFLAG_CHAT))
+	{
+		if(std::none_of(std::begin(s_apChatCommands), std::end(s_apChatCommands), [&](const char *pName) { return str_comp_nocase(pName, pCmd->Name()) == 0; }))
+			vUnrelated.emplace_back(pCmd->Name());
+	}
+	for(const std::string &Name : vUnrelated)
+		pConsole->RemoveCommandFlags(Name.c_str(), CFGFLAG_CHAT);
 }
 
 static const char *const s_apEloDifficulties[] = {"Easy", "Main", "Hard", "Insane", "Extreme"};
@@ -410,8 +440,9 @@ void CGameControllerGTrain::FindTrainPositions()
 		// sides not reaching the finish stay discarded, even if a teleporter leads back to them
 		if(!vKept[Index] || vDiscarded[Index])
 			continue;
-		// death tiles and teleporters are discarded as well, to not kill or move the player instantly
-		if(HasTile(Index, TILE_FREEZE) || HasTile(Index, TILE_DFREEZE) || HasTile(Index, TILE_DEATH))
+		// death tiles and teleporters are discarded as well, to not kill or move the player instantly,
+		// and unfreeze tiles, which would end the hover right away
+		if(HasTile(Index, TILE_FREEZE) || HasTile(Index, TILE_DFREEZE) || HasTile(Index, TILE_DEATH) || HasTile(Index, TILE_UNFREEZE))
 			continue;
 		if(pCollision->IsTeleport(Index) || pCollision->IsEvilTeleport(Index) || IsCheckTeleport(Index))
 			continue;
@@ -635,6 +666,21 @@ void CGameControllerGTrain::DelayHoverDoor(CCharacter *pChr)
 	SSwitchers &Switcher = GameServer()->Switchers()[m_DoorSwitch];
 	if(Switcher.m_aStatus[pChr->Team()] && Switcher.m_aType[pChr->Team()] == TILE_SWITCHTIMEDOPEN)
 		++Switcher.m_aEndTick[pChr->Team()];
+}
+
+void CGameControllerGTrain::OpenHoverDoor(CCharacter *pChr)
+{
+	// Hovers ending early must not leave the tee on its door, which clients
+	// stop predicting at the release. Opens it like its timed switch would.
+	if(m_DoorSwitch < 0 || m_aAttempts[pChr->GetPlayer()->GetCid()].m_DoorIndex < 0)
+		return;
+	SSwitchers &Switcher = GameServer()->Switchers()[m_DoorSwitch];
+	const int Team = pChr->Team();
+	if(!Switcher.m_aStatus[Team] || Switcher.m_aType[Team] != TILE_SWITCHTIMEDOPEN)
+		return;
+	Switcher.m_aStatus[Team] = false;
+	Switcher.m_aEndTick[Team] = 0;
+	Switcher.m_aType[Team] = TILE_SWITCHCLOSE;
 }
 
 void CGameControllerGTrain::OnCharacterSpawn(CCharacter *pChr)
@@ -1479,6 +1525,7 @@ void CGameControllerGTrain::Tick()
 		{
 			if(pChr->m_ZeroGravity)
 				pChr->SetZeroGravity(false);
+			OpenHoverDoor(pChr);
 			Attempt.m_StartTick = Server()->Tick();
 			Attempt.m_Running = !m_aSettings[m_aFightGroup[ClientId]].m_Freeplay && Attempt.m_pGoal && Attempt.m_pGoal->m_Ready;
 		}
