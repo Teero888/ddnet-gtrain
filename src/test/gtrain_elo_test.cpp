@@ -24,12 +24,12 @@ TEST(GTrainElo, SpeedFactorFollowsTheTypicalSpeedOfTheDifficulty)
 	EXPECT_DOUBLE_EQ(SpeedFactor(MAX_STEP, 100, 100 / Extreme), 1);
 	EXPECT_DOUBLE_EQ(SpeedFactor(MAX_STEP, 150, 100 / Extreme), 1.5);
 	EXPECT_DOUBLE_EQ(SpeedFactor(MAX_STEP, 75, 100 / Extreme), std::max(0.75, MIN_SPEED_FACTOR));
-	// Fast captures have no limit, slow ones earn a minimum. Instant
-	// captures count as taking one tick.
-	EXPECT_DOUBLE_EQ(SpeedFactor(MAX_STEP, 1000, 100 / Extreme), 10);
+	// Fast captures earn up to a maximum, slow ones a minimum. Instant
+	// captures count as taking one tick, which always reaches the maximum.
+	EXPECT_DOUBLE_EQ(SpeedFactor(MAX_STEP, 350, 100 / Extreme), 3.5);
+	EXPECT_DOUBLE_EQ(SpeedFactor(MAX_STEP, 1000, 100 / Extreme), MAX_SPEED_FACTOR);
 	EXPECT_DOUBLE_EQ(SpeedFactor(MAX_STEP, 1, 100), MIN_SPEED_FACTOR);
-	EXPECT_DOUBLE_EQ(SpeedFactor(MAX_STEP, 100, 0), 100.0 * (double)SERVER_TICK_SPEED / Extreme);
-	EXPECT_DOUBLE_EQ(SpeedFactor(MAX_STEP, 100, 0), SpeedFactor(MAX_STEP, 100, 1.0 / (double)SERVER_TICK_SPEED));
+	EXPECT_DOUBLE_EQ(SpeedFactor(0, 1, 0), MAX_SPEED_FACTOR);
 }
 
 TEST(GTrainElo, CapturePoints)

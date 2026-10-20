@@ -23,6 +23,7 @@ namespace GTrainElo
 	inline constexpr double EASY_TILES_PER_SECOND = 12;
 	inline constexpr double EXTREME_TILES_PER_SECOND = 6;
 	inline constexpr double MIN_SPEED_FACTOR = 0.5;
+	inline constexpr double MAX_SPEED_FACTOR = 4;
 	// Instant captures count as taking one tick.
 	inline constexpr double MIN_SECONDS = 1.0 / (double)SERVER_TICK_SPEED;
 	// Up to about this many points, ELO grows linearly with them, so single
@@ -47,7 +48,7 @@ namespace GTrainElo
 	inline double SpeedFactor(int Step, int Distance, double Seconds)
 	{
 		const double Typical = EASY_TILES_PER_SECOND + (EXTREME_TILES_PER_SECOND - EASY_TILES_PER_SECOND) * Step / MAX_STEP;
-		return std::max(Distance / std::max(Seconds, MIN_SECONDS) / Typical, MIN_SPEED_FACTOR);
+		return std::clamp(Distance / std::max(Seconds, MIN_SECONDS) / Typical, MIN_SPEED_FACTOR, MAX_SPEED_FACTOR);
 	}
 
 	// Long goals are harder than their length, every tile is another chance

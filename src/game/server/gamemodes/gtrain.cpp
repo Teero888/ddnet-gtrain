@@ -203,13 +203,16 @@ void CGameControllerGTrain::EndAttempt(int ClientId, bool Captured)
 	AddStats(ClientId, Stats);
 }
 
-std::optional<CGameControllerGTrain::CEloGain> CGameControllerGTrain::AwardElo(int ClientId)
+std::optional<CGameControllerGTrain::CEloGain> CGameControllerGTrain::AwardElo(int ClientId, bool Frozen)
 {
 	// The goal's path distance, never more than the chosen goal distance.
 	const CAttempt &Attempt = m_aAttempts[ClientId];
 	const int Distance = Attempt.m_pGoal->m_Distance;
 	if(!m_EloStep || Distance <= 0 || ((CConsole *)GameServer()->Console())->Cheated())
 		return std::nullopt;
+	// Frozen tees still capture, but only reaching the flag in control earns.
+	if(Frozen)
+		return CEloGain{0.0, 0.0, true};
 	const double Seconds = (Server()->Tick() - Attempt.m_StartTick) / (double)Server()->TickSpeed();
 	CGTrainStats Gain;
 	Gain.m_Points = GTrainElo::CapturePoints(*m_EloStep, Distance, Seconds);
@@ -221,7 +224,9 @@ std::optional<CGameControllerGTrain::CEloGain> CGameControllerGTrain::AwardElo(i
 void CGameControllerGTrain::FormatCaptureResult(char *pBuf, int BufSize, int Fails, const std::optional<CEloGain> &Gain)
 {
 	str_format(pBuf, BufSize, "%d fail%s", Fails, Fails == 1 ? "" : "s");
-	if(Gain)
+	if(Gain && Gain->m_Frozen)
+		str_append(pBuf, ", +0 ELO (frozen)", BufSize);
+	else if(Gain)
 	{
 		char aElo[64];
 		str_format(aElo, sizeof(aElo), ", +%.2f ELO, %.1fx speed", Gain->m_Elo, Gain->m_SpeedFactor);
@@ -1276,8 +1281,9 @@ void CGameControllerGTrain::CheckGoal(CCharacter *pChr)
 	if(dot(GoalOffset, GoalOffset) < 42.0f * 42.0f)
 	{
 		const int Group = m_aFightGroup[ClientId];
+		const bool Frozen = pChr->m_FreezeTime > 0 || pChr->Core()->m_DeepFrozen || pChr->Core()->m_LiveFrozen;
 		EndAttempt(ClientId, true);
-		const std::optional<CEloGain> Gain = AwardElo(ClientId);
+		const std::optional<CEloGain> Gain = AwardElo(ClientId, Frozen);
 		if(FightSize(Group) > 1)
 		{
 			AnnounceFightScore(ClientId, Gain);

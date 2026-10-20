@@ -129,10 +129,12 @@ class CGameControllerGTrain : public CGameControllerDDNet
 	{
 		double m_Elo;
 		double m_SpeedFactor;
+		// captured while frozen, which earns nothing
+		bool m_Frozen = false;
 	};
 	static void FormatCaptureResult(char *pBuf, int BufSize, int Fails, const std::optional<CEloGain> &Gain);
 	void AnnounceFightScore(int Winner, const std::optional<CEloGain> &Gain);
-	std::optional<CEloGain> AwardElo(int ClientId);
+	std::optional<CEloGain> AwardElo(int ClientId, bool Frozen);
 	void AddStats(int ClientId, const CGTrainStats &Stats);
 	void EndAttempt(int ClientId, bool Captured);
 	void SaveStats(int ClientId);

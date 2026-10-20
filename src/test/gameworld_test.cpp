@@ -2094,7 +2094,7 @@ TEST_F(GameWorld, GTrainCapturesEarnEloByDifficultySpeedAndGoalDistance)
 	const auto GoalTiles = [&](int ClientId) {
 		return (int)std::abs(TrainingGoal(ClientId).x - GameServer()->GetPlayerChar(ClientId)->m_Pos.x) / 32;
 	};
-	const auto Capture = [&](int ClientId, int Ticks = 0) {
+	const auto Capture = [&](int ClientId, int Ticks = 0, bool Frozen = false) {
 		for(int Other : vIds)
 			if(CCharacter *pChr = GameServer()->GetPlayerChar(Other))
 				pChr->Unfreeze();
@@ -2103,6 +2103,8 @@ TEST_F(GameWorld, GTrainCapturesEarnEloByDifficultySpeedAndGoalDistance)
 		CCharacter *pChr = GameServer()->GetPlayerChar(ClientId);
 		pChr->m_Pos = pChr->m_PrevPos = TrainingGoal(ClientId);
 		pChr->SetPosition(pChr->m_Pos);
+		if(Frozen)
+			pChr->Freeze();
 		CMemoryLogger Logger;
 		{
 			CLogScope Scope(&Logger);
@@ -2136,9 +2138,8 @@ TEST_F(GameWorld, GTrainCapturesEarnEloByDifficultySpeedAndGoalDistance)
 	int Tiles = GoalTiles(Runner);
 	ASSERT_GT(Tiles, 0);
 	EXPECT_NE(Capture(Runner).find("(0 fails, " + Gain(Runner, 7, Tiles, 0) + ")."), std::string::npos);
-	// They take one tick. Hard 2 star's typical speed is halfway between Easy and Extreme.
-	const double HardTypical = (GTrainElo::EASY_TILES_PER_SECOND + GTrainElo::EXTREME_TILES_PER_SECOND) / 2;
-	EXPECT_EQ(aPoints[Runner], std::llround(100 * std::pow(Tiles / 100.0, GTrainElo::DISTANCE_EXPONENT) * GTrainElo::PointsPerTile(7) * (Tiles * SERVER_TICK_SPEED / HardTypical)));
+	// Their speed bonus is the highest.
+	EXPECT_EQ(aPoints[Runner], std::llround(100 * std::pow(Tiles / 100.0, GTrainElo::DISTANCE_EXPONENT) * GTrainElo::PointsPerTile(7) * GTrainElo::MAX_SPEED_FACTOR));
 	// Longer goals earn more, retries don't change what a capture earns. The
 	// corridor is too short for /distance, which takes at least 50 tiles.
 	g_Config.m_SvGtrainGoalDistance = 6;
@@ -2153,6 +2154,12 @@ TEST_F(GameWorld, GTrainCapturesEarnEloByDifficultySpeedAndGoalDistance)
 	ASSERT_EQ(Tiles, 6);
 	m_pServer->Console()->ExecuteLineFlag("r", CFGFLAG_CHAT, Runner);
 	EXPECT_NE(Capture(Runner).find("(1 fail, " + Gain(Runner, 7, Tiles, 0) + ")."), std::string::npos);
+
+	// Frozen tees still capture, without ELO.
+	const int Captures = pController->Stats(Runner).m_Captures;
+	EXPECT_NE(Capture(Runner, 0, true).find("'Runner' captured the flag in 0.00 seconds (0 fails, +0 ELO (frozen))."), std::string::npos);
+	EXPECT_EQ(pController->Stats(Runner).m_Captures, Captures + 1);
+	EXPECT_EQ(pController->Stats(Runner).m_Points, aPoints[Runner]);
 
 	// Half the typical speed of an Extreme map is slow.
 	pController->SetMapDifficulty("Extreme", 3);
@@ -2171,6 +2178,10 @@ TEST_F(GameWorld, GTrainCapturesEarnEloByDifficultySpeedAndGoalDistance)
 	Messages = Capture(Bob);
 	EXPECT_NE(Messages.find("'Bob' captured the flag (0 fails, " + Gain(Bob, 14, Tiles, 0) + "). Fight score (first to 10): 'Anna': 0, 'Bob': 1"), std::string::npos);
 	EXPECT_EQ(Messages.find("'Anna' captured"), std::string::npos);
+	// Frozen fight captures score too.
+	Messages = Capture(Bob, 0, true);
+	EXPECT_NE(Messages.find("'Bob' captured the flag (0 fails, +0 ELO (frozen)). Fight score (first to 10): 'Anna': 0, 'Bob': 2"), std::string::npos);
+	EXPECT_EQ(pController->Stats(Bob).m_Points, aPoints[Bob]);
 
 	pController->SetMapDifficulty("Mod", 3);
 	EXPECT_EQ(Help(), "Captures on this map earn no ELO.");
