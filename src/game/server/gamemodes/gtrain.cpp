@@ -69,6 +69,9 @@ CGameControllerGTrain::~CGameControllerGTrain()
 	for(auto SnapId : m_aDoorSnapIds)
 		if(SnapId)
 			Server()->SnapFreeId(*SnapId);
+	// Map changes and shutdowns delete the controller before the database.
+	if(GameServer()->Score())
+		SaveAllStats();
 }
 
 bool CGameControllerGTrain::AddSwitchLayer(IStorage *pStorage, const char *pPath, char *pNewPath, int NewPathSize)
@@ -177,13 +180,54 @@ void CGameControllerGTrain::SetMapDifficulty(const char *pServer, int Stars)
 		log_info("gtrain", "map is '%s' with %d stars, captures earn no ELO", pServer, Stars);
 }
 
-void CGameControllerGTrain::LoadElo(int ClientId)
+void CGameControllerGTrain::LoadStats(int ClientId)
 {
-	// Database jobs run in order, so gains awarded from now on are missing
-	// from this result and get added to it.
-	m_aEloPoints[ClientId] = 0;
-	m_apEloResults[ClientId] = std::make_shared<CScoreEloResult>();
-	GameServer()->Score()->LoadElo(ClientId, m_apEloResults[ClientId]);
+	SaveStats(ClientId);
+	// Database jobs run in order, so changes from now on are missing from
+	// this result and get added to it.
+	m_aStats[ClientId] = CGTrainStats();
+	m_aPlaytimeTicks[ClientId] = 0;
+	str_copy(m_aaStatsNames[ClientId], Server()->ClientName(ClientId));
+	m_apStatsResults[ClientId] = std::make_shared<CScoreGTrainStatsResult>();
+	GameServer()->Score()->LoadGTrainStats(m_aaStatsNames[ClientId], m_apStatsResults[ClientId]);
+}
+
+void CGameControllerGTrain::AddStats(int ClientId, const CGTrainStats &Stats)
+{
+	m_aStats[ClientId].Add(Stats);
+	m_aUnsavedStats[ClientId].Add(Stats);
+}
+
+void CGameControllerGTrain::SaveStats(int ClientId)
+{
+	if(m_aUnsavedStats[ClientId].IsEmpty() || !m_aaStatsNames[ClientId][0])
+		return;
+	GameServer()->Score()->AddGTrainStats(m_aaStatsNames[ClientId], m_aUnsavedStats[ClientId]);
+	m_aUnsavedStats[ClientId] = CGTrainStats();
+}
+
+void CGameControllerGTrain::SaveAllStats()
+{
+	for(int ClientId = 0; ClientId < MAX_CLIENTS; ++ClientId)
+		SaveStats(ClientId);
+}
+
+void CGameControllerGTrain::EndAttempt(int ClientId, bool Captured)
+{
+	// Quick retries and skipped spots are no attempts, and rcon cheats would
+	// make anything trivial.
+	CAttempt &Attempt = m_aAttempts[ClientId];
+	if(!Attempt.m_Running)
+		return;
+	Attempt.m_Running = false;
+	if((!Captured && Server()->Tick() - Attempt.m_StartTick < MIN_ATTEMPT_SECONDS * Server()->TickSpeed()) ||
+		((CConsole *)GameServer()->Console())->Cheated())
+		return;
+	Attempt.m_SpotTried = true;
+	CGTrainStats Stats;
+	Stats.m_Attempts = 1;
+	Stats.m_Captures = Captured;
+	AddStats(ClientId, Stats);
 }
 
 std::optional<CGameControllerGTrain::CEloGain> CGameControllerGTrain::AwardElo(int ClientId)
@@ -194,11 +238,11 @@ std::optional<CGameControllerGTrain::CEloGain> CGameControllerGTrain::AwardElo(i
 	if(!m_EloStep || Distance <= 0 || ((CConsole *)GameServer()->Console())->Cheated())
 		return std::nullopt;
 	const double Seconds = (Server()->Tick() - Attempt.m_StartTick) / (double)Server()->TickSpeed();
-	const int64_t Points = GTrainElo::CapturePoints(*m_EloStep, Distance, Seconds);
-	const double EloBefore = GTrainElo::FromPoints(m_aEloPoints[ClientId]);
-	m_aEloPoints[ClientId] += Points;
-	GameServer()->Score()->AddElo(ClientId, Points);
-	return CEloGain{GTrainElo::FromPoints(m_aEloPoints[ClientId]) - EloBefore, GTrainElo::SpeedFactor(*m_EloStep, Distance, Seconds)};
+	CGTrainStats Gain;
+	Gain.m_Points = GTrainElo::CapturePoints(*m_EloStep, Distance, Seconds);
+	const double EloBefore = GTrainElo::FromPoints(m_aStats[ClientId].m_Points);
+	AddStats(ClientId, Gain);
+	return CEloGain{GTrainElo::FromPoints(m_aStats[ClientId].m_Points) - EloBefore, GTrainElo::SpeedFactor(*m_EloStep, Distance, Seconds)};
 }
 
 void CGameControllerGTrain::FormatCaptureResult(char *pBuf, int BufSize, int Fails, const std::optional<CEloGain> &Gain)
@@ -497,6 +541,7 @@ void CGameControllerGTrain::PlaceForAttempt(CPlayer *pPlayer, const std::shared_
 	const int ClientId = pPlayer->GetCid();
 	const CSettings &Settings = m_aSettings[m_aFightGroup[ClientId]];
 	const vec2 Pos = m_PathGraph.m_vNodes[Start].m_Pos;
+	EndAttempt(ClientId, false);
 	// Every attempt starts like after a kill, without the weapons and
 	// powerups picked up during the previous one. Characters that spawned
 	// for this placement are new already. The quiet death neither restarts
@@ -517,7 +562,10 @@ void CGameControllerGTrain::PlaceForAttempt(CPlayer *pPlayer, const std::shared_
 	CAttempt &Attempt = m_aAttempts[ClientId];
 	// Goals are rebuilt in place, so a matching goal and start is not enough:
 	// only retries count as fails.
-	Attempt.m_Fails = Retry && Attempt.m_pGoal == pGoal && Attempt.m_Start == Start ? Attempt.m_Fails + 1 : 0;
+	const bool SameSpot = Retry && Attempt.m_pGoal == pGoal && Attempt.m_Start == Start;
+	Attempt.m_Fails = SameSpot ? Attempt.m_Fails + 1 : 0;
+	if(!SameSpot)
+		Attempt.m_SpotTried = false;
 	Attempt.m_pGoal = pGoal;
 	Attempt.m_Start = Start;
 	Attempt.m_TargetDistance = TargetDistance;
@@ -643,7 +691,7 @@ int CGameControllerGTrain::SnapPlayerScore(int SnappingClient, CPlayer *pPlayer)
 	const int ClientId = pPlayer->GetCid();
 	if(pPlayer->GetTeam() != TEAM_SPECTATORS && m_aFightTeam[m_aFightGroup[ClientId]] != 0)
 		return m_aFightWins[ClientId];
-	return (int)GTrainElo::FromPoints(m_aEloPoints[ClientId]);
+	return (int)GTrainElo::FromPoints(m_aStats[ClientId].m_Points);
 }
 
 void CGameControllerGTrain::UpdateFightTeams()
@@ -837,7 +885,10 @@ void CGameControllerGTrain::Freeplay(int ClientId)
 	Freeplay = !Freeplay;
 	for(int Other = 0; Other < MAX_CLIENTS; ++Other)
 		if(Freeplay && m_aFightGroup[Other] == Group)
+		{
+			EndAttempt(Other, false);
 			m_aAttempts[Other].m_vRoute.clear();
+		}
 	SendFightChat(Group, Freeplay ? "Freeplay enabled. Flags and paths are hidden; captures are disabled." : "Freeplay disabled. Starting a new training attempt.");
 	if(!Freeplay)
 	{
@@ -979,6 +1030,7 @@ void CGameControllerGTrain::Help()
 	log_info("chatresp", "/freeplay: toggle training without flags and paths");
 	log_info("chatresp", "In a fight, only the leader (*name*) changes these settings.");
 	log_info("chatresp", "/points or /elo [player]: show ELO, /top5points or /top5elo: the ELO ladder");
+	log_info("chatresp", "/rank or /profile [player]: stats and playtime, /top5captures, /top5attempts, /top5respawns, /top5playtime: their ladders");
 	if(m_EloStep)
 		log_info("chatresp", "A 100 tile goal here earns %.0f points at a typical speed (%s %s), longer and faster ones more.", GTrainElo::REFERENCE_DISTANCE * GTrainElo::PointsPerTile(*m_EloStep),
 			s_apEloDifficulties[*m_EloStep / std::size(s_apEloStars)], s_apEloStars[*m_EloStep % std::size(s_apEloStars)]);
@@ -1003,7 +1055,22 @@ int CGameControllerGTrain::OnCharacterDeath(CCharacter *pVictim, CPlayer *pKille
 	const int Result = CGameControllerDDNet::OnCharacterDeath(pVictim, pKiller, Weapon);
 	const int ClientId = pVictim->GetPlayer()->GetCid();
 	const int Group = m_aFightGroup[ClientId];
-	if(m_SyncFightDeaths || !pVictim->IsAlive() || ClientId != Group || FightSize(Group) <= 1)
+	// Replaced characters and peers dying with their fight leader keep their
+	// stats until they are placed again.
+	if(m_SyncFightDeaths || !pVictim->IsAlive())
+		return Result;
+	EndAttempt(ClientId, false);
+	// Solo players and fight leaders give up their spot by dying, a respawn
+	// once they tried it.
+	CAttempt &Attempt = m_aAttempts[ClientId];
+	if(ClientId == Group && Attempt.m_SpotTried)
+	{
+		Attempt.m_SpotTried = false;
+		CGTrainStats Stats;
+		Stats.m_Respawns = 1;
+		AddStats(ClientId, Stats);
+	}
+	if(ClientId != Group || FightSize(Group) <= 1)
 		return Result;
 	m_aFightRestart[Group] = true;
 	// Death callbacks run before the victim is marked dead. Suppress recursive
@@ -1121,6 +1188,7 @@ void CGameControllerGTrain::CheckGoal(CCharacter *pChr)
 	if(dot(GoalOffset, GoalOffset) < 42.0f * 42.0f)
 	{
 		const int Group = m_aFightGroup[ClientId];
+		EndAttempt(ClientId, true);
 		const std::optional<CEloGain> Gain = AwardElo(ClientId);
 		if(FightSize(Group) > 1)
 		{
@@ -1154,19 +1222,23 @@ void CGameControllerGTrain::OnPlayerDisconnect(CPlayer *pPlayer, const char *pRe
 {
 	const int ClientId = pPlayer->GetCid();
 	LeaveFight(ClientId, false);
+	EndAttempt(ClientId, false);
+	SaveStats(ClientId);
 	m_aPendingPlace[ClientId] = false;
 	m_aAttempts[ClientId] = CAttempt();
 	m_aFightWins[ClientId] = 0;
 	m_aSettings[ClientId] = CSettings();
-	m_aEloPoints[ClientId] = 0;
-	m_apEloResults[ClientId] = nullptr;
+	m_aStats[ClientId] = CGTrainStats();
+	m_apStatsResults[ClientId] = nullptr;
+	m_aaStatsNames[ClientId][0] = '\0';
+	m_aPlaytimeTicks[ClientId] = 0;
 	CGameControllerDDNet::OnPlayerDisconnect(pPlayer, pReason);
 }
 
 void CGameControllerGTrain::OnPlayerConnect(CPlayer *pPlayer)
 {
 	CGameControllerDDNet::OnPlayerConnect(pPlayer);
-	LoadElo(pPlayer->GetCid());
+	LoadStats(pPlayer->GetCid());
 	UpdateFightTeams();
 }
 
@@ -1309,18 +1381,21 @@ void CGameControllerGTrain::Tick()
 	}
 	for(int ClientId = 0; ClientId < MAX_CLIENTS; ++ClientId)
 	{
-		auto &pEloResult = m_apEloResults[ClientId];
-		if(pEloResult && pEloResult->m_Completed)
+		auto &pStatsResult = m_apStatsResults[ClientId];
+		if(pStatsResult && pStatsResult->m_Completed)
 		{
-			if(pEloResult->m_Success)
-				m_aEloPoints[ClientId] += pEloResult->m_Points;
-			pEloResult = nullptr;
+			if(pStatsResult->m_Success)
+				m_aStats[ClientId].Add(pStatsResult->m_Stats);
+			pStatsResult = nullptr;
 		}
 		// The server browser shows the same scores. Loading race times after a
 		// name change would replace them otherwise.
 		if(CPlayer *pPlayer = GameServer()->m_apPlayers[ClientId])
 			Server()->SetClientScore(ClientId, SnapPlayerScore(ClientId, pPlayer));
 	}
+	// Stats are saved in batches, crashes lose at most this much.
+	if(Server()->Tick() % (STATS_SAVE_SECONDS * Server()->TickSpeed()) == 0)
+		SaveAllStats();
 
 	// killing is how players choose a new position, never delay it
 	g_Config.m_SvKillDelay = 0;
@@ -1337,6 +1412,18 @@ void CGameControllerGTrain::Tick()
 			}
 		}
 		return;
+	}
+
+	// Playtime counts while playing, not while paused or spectating.
+	for(int ClientId = 0; ClientId < MAX_CLIENTS; ++ClientId)
+	{
+		CPlayer *pPlayer = GameServer()->m_apPlayers[ClientId];
+		if(!pPlayer || pPlayer->GetTeam() == TEAM_SPECTATORS || pPlayer->IsPaused() || ++m_aPlaytimeTicks[ClientId] < Server()->TickSpeed())
+			continue;
+		m_aPlaytimeTicks[ClientId] = 0;
+		CGTrainStats Stats;
+		Stats.m_Playtime = 1;
+		AddStats(ClientId, Stats);
 	}
 
 	// Remove spectator links before group respawns, and coalesce all death
@@ -1393,6 +1480,7 @@ void CGameControllerGTrain::Tick()
 			if(pChr->m_ZeroGravity)
 				pChr->SetZeroGravity(false);
 			Attempt.m_StartTick = Server()->Tick();
+			Attempt.m_Running = !m_aSettings[m_aFightGroup[ClientId]].m_Freeplay && Attempt.m_pGoal && Attempt.m_pGoal->m_Ready;
 		}
 		if(m_aSettings[m_aFightGroup[ClientId]].m_Freeplay)
 			continue;

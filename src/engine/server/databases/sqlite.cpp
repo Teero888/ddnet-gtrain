@@ -165,7 +165,7 @@ bool CSqliteConnection::ConnectImpl(char *pError, int ErrorSize)
 		FormatCreatePoints(aBuf, sizeof(aBuf));
 		if(!Execute(aBuf, pError, ErrorSize))
 			return false;
-		FormatCreateElo(aBuf, sizeof(aBuf));
+		FormatCreateGTrainStats(aBuf, sizeof(aBuf));
 		if(!Execute(aBuf, pError, ErrorSize))
 			return false;
 

@@ -26,6 +26,8 @@ A server-side [DDNet](https://github.com/ddnet/ddnet) mod for training Gores map
 | `/freeplay` | Toggle training without flags, paths and captures |
 | `/points`, `/elo [player]` | Show your ELO, points and rank, or another player's |
 | `/top5points`, `/top5elo [rank]` | Show five players of the ELO ladder, starting at the rank (1 by default) |
+| `/rank`, `/profile [player]` | Show your [stats](#stats) and playtime, or another player's |
+| `/top5captures`, `/top5attempts`, `/top5respawns`, `/top5playtime [rank]` | Show five players of these ladders |
 | `/help` | List these commands |
 
 `/distance` and `/scorelimit` show the current value without an argument. In a fight, only the leader can change these settings, and they apply to the whole group. Leaving a fight keeps its settings, and joining one adopts its settings, including removing weapons it has disabled.
@@ -44,7 +46,7 @@ Every capture earns points, and your ELO shows them on a scale from 0 to 9999. B
   | Insane | 3844 | 5767 | 8650 |
   | Extreme | 12975 | 19462 | 29193 |
 
-- Longer goals are worth more than their length, since every tile is another chance to fail: points grow with the distance to the power of 1.2, so twice the distance earns about 2.3 times as many. Per tile, 50 tile goals earn 0.87 times the table's points, 200 tiles 1.15 times and 500 tiles 1.38 times.
+- Longer goals are worth more than their length, since every tile is another chance to fail: points grow with the distance to the power of 1.5, so twice the distance earns about 2.8 times as many. Per tile, 50 tile goals earn 0.71 times the table's points, 200 tiles 1.41 times and 500 tiles 2.24 times.
 - That is multiplied by your speed compared to a typical one, from 16 path tiles per second on Easy down to 8 on Extreme (measured from captures on the KoG maps). Faster captures earn more without a limit, slow ones still earn at least half. Only the time of the successful attempt counts.
 - The distance is the goal's actual distance, which is shorter than the `/distance` setting when the finish line is closer.
 - ELO is logarithmic: it grows by about 760 every time your points double, so new players climb fast and harder maps keep raising it. A single capture barely counts on its own. Rough guide, at a typical speed:
@@ -62,6 +64,17 @@ Every capture earns points, and your ELO shows them on a scale from 0 to 9999. B
 - The capture message shows the ELO you gained and your speed factor, e.g. `(2 fails, +0.42 ELO, 1.3x speed)`.
 - In a fight, only the player capturing the flag earns ELO. Freeplay never does, and neither does a server where rcon cheats were used.
 - Outside fights, the scoreboard and the server browser show each player's ELO as their score.
+
+## Stats
+
+Besides the ELO, the server counts these for every player name, on every map:
+
+- **Attempts**: lives at a spot, from the release until a capture, death, `/r` or a new spot. Only attempts of at least 2 seconds count, not counting the hover or pauses, but captures always do.
+- **Respawns**: spots given up by killing or dying after at least one attempt of 2 seconds there. Fight members dying respawn at the same spot, so only the fight leader's deaths count. `/r` is no respawn.
+- **Captures**: flags captured.
+- **Playtime**: time in the game, not paused or spectating.
+
+Freeplay has no attempts, and rcon cheats stop everything but the playtime from counting. Changes are saved every minute, when leaving or renaming, on map changes and before showing any stats, so the ladders are always up to date.
 
 ## Fights
 

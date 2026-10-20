@@ -2,6 +2,7 @@
 #define GAME_SERVER_GAMEMODES_GTRAIN_H
 
 #include "ddnet.h"
+#include "gtrain_elo.h"
 #include "gtrain_path.h"
 
 #include <base/vmath.h>
@@ -14,7 +15,7 @@
 #include <optional>
 #include <vector>
 
-struct CScoreEloResult;
+struct CScoreGTrainStatsResult;
 struct CScoreMapDifficultyResult;
 
 // Gores training: players get placed at random positions between
@@ -31,6 +32,9 @@ class CGameControllerGTrain : public CGameControllerDDNet
 		MAX_GOAL_DISTANCE = 500,
 		DEFAULT_SCORE_LIMIT = 10,
 		MAX_SCORE_LIMIT = 1000,
+		// Shorter attempts are no attempts, unless they capture the flag.
+		MIN_ATTEMPT_SECONDS = 2,
+		STATS_SAVE_SECONDS = 60,
 	};
 
 	// centers of all non-freeze tiles between the start and the finish line
@@ -49,6 +53,11 @@ class CGameControllerGTrain : public CGameControllerDDNet
 		int m_DoorIndex = -1;
 		// retries of this start and goal, after death or /r
 		int m_Fails = 0;
+		// Released with a goal, until the attempt ends. Freeplay has none.
+		bool m_Running = false;
+		// An attempt at this start and goal counted, so giving it up by
+		// dying is a respawn.
+		bool m_SpotTried = false;
 		std::vector<int> m_vRoute;
 		size_t m_RouteIndex = 0;
 		int m_RouteNode = -1;
@@ -80,10 +89,14 @@ class CGameControllerGTrain : public CGameControllerDDNet
 	// Difficulty step of the map for capture points, unset on maps without
 	// ELO.
 	std::optional<int> m_EloStep;
-	// The ELO points of each player's name: their gains since requesting them
-	// from the database, plus the loaded points once the request completes.
-	int64_t m_aEloPoints[MAX_CLIENTS] = {};
-	std::shared_ptr<CScoreEloResult> m_apEloResults[MAX_CLIENTS];
+	// The stats of each player's name: their changes since requesting them
+	// from the database, plus the loaded stats once the request completes.
+	CGTrainStats m_aStats[MAX_CLIENTS];
+	std::shared_ptr<CScoreGTrainStatsResult> m_apStatsResults[MAX_CLIENTS];
+	// Changes not saved yet, for the name the stats were loaded for.
+	CGTrainStats m_aUnsavedStats[MAX_CLIENTS];
+	char m_aaStatsNames[MAX_CLIENTS][MAX_NAME_LENGTH] = {};
+	int m_aPlaytimeTicks[MAX_CLIENTS] = {};
 
 	void FindTrainPositions();
 	void ExcludeStartArea();
@@ -108,6 +121,9 @@ class CGameControllerGTrain : public CGameControllerDDNet
 	static void FormatCaptureResult(char *pBuf, int BufSize, int Fails, const std::optional<CEloGain> &Gain);
 	void AnnounceFightScore(int Winner, const std::optional<CEloGain> &Gain);
 	std::optional<CEloGain> AwardElo(int ClientId);
+	void AddStats(int ClientId, const CGTrainStats &Stats);
+	void EndAttempt(int ClientId, bool Captured);
+	void SaveStats(int ClientId);
 	int PathNode(vec2 Pos) const;
 	void UpdatePath(class CCharacter *pChr);
 	void CheckGoal(class CCharacter *pChr);
@@ -121,8 +137,12 @@ public:
 	static std::optional<int> EloStep(const char *pServer, int Stars);
 	void LoadMapDifficulty();
 	void SetMapDifficulty(const char *pServer, int Stars);
-	// Loads the ELO of the player's current name, after joining or renaming.
-	void LoadElo(int ClientId);
+	// Loads the stats of the player's current name, after joining or
+	// renaming. Changes to the previous name's stats are saved first.
+	void LoadStats(int ClientId);
+	// Before the database shows stats, so they include the latest changes.
+	void SaveAllStats();
+	const CGTrainStats &Stats(int ClientId) const { return m_aStats[ClientId]; }
 
 	void OnCharacterSpawn(class CCharacter *pChr) override;
 	int OnCharacterDeath(class CCharacter *pVictim, class CPlayer *pKiller, int Weapon) override;

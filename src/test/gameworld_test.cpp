@@ -2027,7 +2027,7 @@ TEST_F(GameWorld, GTrainCapturesEarnEloByDifficultySpeedAndGoalDistance)
 	ASSERT_GT(Tiles, 0);
 	EXPECT_NE(Capture(Runner).find("(0 fails, " + Gain(Runner, 7, Tiles, 0) + ")."), std::string::npos);
 	// They take one tick, at Hard 2 star's typical speed of 12 tiles per second.
-	EXPECT_EQ(aPoints[Runner], std::llround(100 * std::pow(Tiles / 100.0, 1.2) * GTrainElo::PointsPerTile(7) * (Tiles * SERVER_TICK_SPEED / 12.0)));
+	EXPECT_EQ(aPoints[Runner], std::llround(100 * std::pow(Tiles / 100.0, GTrainElo::DISTANCE_EXPONENT) * GTrainElo::PointsPerTile(7) * (Tiles * SERVER_TICK_SPEED / 12.0)));
 	// Longer goals earn more, retries don't change what a capture earns. The
 	// corridor is too short for /distance, which takes at least 50 tiles.
 	g_Config.m_SvGtrainGoalDistance = 6;
@@ -2064,6 +2064,97 @@ TEST_F(GameWorld, GTrainCapturesEarnEloByDifficultySpeedAndGoalDistance)
 	EXPECT_EQ(Messages.find("ELO"), std::string::npos);
 }
 
+TEST_F(GameWorld, GTrainStatsCountAttemptsRespawnsCapturesAndPlaytime)
+{
+	PrepareTrainingCorridor();
+	const auto vIds = SpawnTrainingPlayers({"Runner", "Anna", "Bob"});
+	const int Runner = vIds[0], Anna = vIds[1], Bob = vIds[2];
+	auto *pController = static_cast<CGameControllerGTrain *>(GameServer()->m_pController);
+	const auto Stats = [&](int ClientId) { return pController->Stats(ClientId); };
+	// Ends the hover, then plays for the given time.
+	const auto Play = [&](std::initializer_list<int> Ids, int Ticks) {
+		for(int ClientId : Ids)
+			GameServer()->GetPlayerChar(ClientId)->Unfreeze();
+		pController->Tick();
+		m_pServer->AdvanceTicks(Ticks);
+	};
+	const auto Kill = [&](int ClientId) {
+		GameServer()->m_apPlayers[ClientId]->KillCharacter(WEAPON_SELF);
+		GameServer()->m_apPlayers[ClientId]->ForceSpawn(vec2(80, 80));
+		pController->Tick();
+	};
+	const auto Capture = [&](int ClientId) {
+		CCharacter *pChr = GameServer()->GetPlayerChar(ClientId);
+		pChr->m_Pos = pChr->m_PrevPos = TrainingGoal(ClientId);
+		pChr->SetPosition(pChr->m_Pos);
+		pController->Tick();
+	};
+	const auto Retry = [&](int ClientId) { m_pServer->Console()->ExecuteLineFlag("r", CFGFLAG_CHAT, ClientId); };
+	constexpr int Second = SERVER_TICK_SPEED;
+
+	// Attempts count after two seconds of play.
+	Play({Runner}, 2 * Second - 1);
+	Retry(Runner);
+	EXPECT_EQ(Stats(Runner).m_Attempts, 0);
+	Play({Runner}, 2 * Second);
+	Retry(Runner);
+	EXPECT_EQ(Stats(Runner).m_Attempts, 1);
+	// Giving up a tried spot is a respawn, also while hovering after a retry.
+	Kill(Runner);
+	EXPECT_EQ(Stats(Runner).m_Respawns, 1);
+	// Skipping a spot without trying it is none.
+	Kill(Runner);
+	EXPECT_EQ(Stats(Runner).m_Respawns, 1);
+	// Captures always count as attempts, and their spots never as respawns.
+	Play({Runner}, 0);
+	Capture(Runner);
+	EXPECT_EQ(Stats(Runner).m_Captures, 1);
+	EXPECT_EQ(Stats(Runner).m_Attempts, 2);
+	EXPECT_EQ(Stats(Runner).m_Respawns, 1);
+	Play({Runner}, 3 * Second);
+	Kill(Runner);
+	EXPECT_EQ(Stats(Runner).m_Attempts, 3);
+	EXPECT_EQ(Stats(Runner).m_Respawns, 2);
+
+	// Fight members dying retry the spot, only the leader gives it up.
+	pController->Fight(Bob, "Anna");
+	pController->Tick();
+	Play({Anna, Bob}, 2 * Second);
+	Kill(Bob);
+	EXPECT_EQ(Stats(Bob).m_Attempts, 1);
+	EXPECT_EQ(Stats(Bob).m_Respawns, 0);
+	EXPECT_EQ(Stats(Anna).m_Attempts, 0);
+	Kill(Anna);
+	EXPECT_EQ(Stats(Anna).m_Attempts, 1);
+	EXPECT_EQ(Stats(Anna).m_Respawns, 1);
+	EXPECT_EQ(Stats(Bob).m_Attempts, 1);
+	EXPECT_EQ(Stats(Bob).m_Respawns, 0);
+
+	// Freeplay has no attempts.
+	pController->Freeplay(Runner);
+	Play({Runner}, 3 * Second);
+	Kill(Runner);
+	EXPECT_EQ(Stats(Runner).m_Attempts, 3);
+	EXPECT_EQ(Stats(Runner).m_Respawns, 2);
+	pController->Freeplay(Runner);
+
+	// Playtime counts while playing, not while paused or spectating. Bob
+	// leaves the fight first, his leader's death would kill him too.
+	pController->Fight(Bob, "");
+	pController->Tick();
+	GameServer()->m_apPlayers[Anna]->SetTeam(TEAM_SPECTATORS);
+	ASSERT_EQ(GameServer()->m_apPlayers[Bob]->Pause(CPlayer::PAUSE_PAUSED, true), CPlayer::PAUSE_PAUSED);
+	pController->Tick();
+	const int RunnerPlaytime = Stats(Runner).m_Playtime;
+	const int AnnaPlaytime = Stats(Anna).m_Playtime;
+	const int BobPlaytime = Stats(Bob).m_Playtime;
+	for(int i = 0; i < 3 * Second; ++i)
+		pController->Tick();
+	EXPECT_EQ(Stats(Runner).m_Playtime, RunnerPlaytime + 3);
+	EXPECT_EQ(Stats(Anna).m_Playtime, AnnaPlaytime);
+	EXPECT_EQ(Stats(Bob).m_Playtime, BobPlaytime);
+}
+
 TEST_F(GameWorld, GTrainEloScoreboard)
 {
 	// ELO points are stored per name in the database, which runs jobs in order on its own thread.
@@ -2085,8 +2176,8 @@ TEST_F(GameWorld, GTrainEloScoreboard)
 	const auto Elo = [](int64_t Points) { return (int)GTrainElo::FromPoints(Points); };
 	// A job queued last completes after all earlier ones.
 	const auto WaitForDatabase = [&]() {
-		auto pLast = std::make_shared<CScoreEloResult>();
-		GameServer()->Score()->LoadElo(Runner, pLast);
+		auto pLast = std::make_shared<CScoreGTrainStatsResult>();
+		GameServer()->Score()->LoadGTrainStats("Runner", pLast);
 		for(int i = 0; i < 1000 && !pLast->m_Completed; ++i)
 			std::this_thread::sleep_for(std::chrono::milliseconds(5));
 		EXPECT_TRUE(pLast->m_Completed);
@@ -2125,11 +2216,17 @@ TEST_F(GameWorld, GTrainEloScoreboard)
 		EXPECT_STREQ(m_pServer->ClientName(ClientId), pName);
 	};
 
+	const auto AddPoints = [&](const char *pName, int64_t Points) {
+		CGTrainStats Stats;
+		Stats.m_Points = Points;
+		GameServer()->Score()->AddGTrainStats(pName, Stats);
+	};
+
 	// Points from earlier grinding load once the names are set.
-	GameServer()->Score()->AddElo(Runner, 2'000'000'000);
-	GameServer()->Score()->AddElo(Bob, 1'000'000'000);
+	AddPoints("Runner", 2'000'000'000);
+	AddPoints("Bob", 1'000'000'000);
 	for(int ClientId : vIds)
-		pController->LoadElo(ClientId);
+		pController->LoadStats(ClientId);
 	ASSERT_TRUE(WaitForDatabase());
 	EXPECT_EQ(Score(Runner), Elo(2'000'000'000));
 	EXPECT_GT(Score(Runner), 0);
@@ -2149,9 +2246,11 @@ TEST_F(GameWorld, GTrainEloScoreboard)
 	RunnerPoints += Capture(Runner);
 	ASSERT_TRUE(WaitForDatabase());
 	EXPECT_EQ(Score(Runner), Elo(RunnerPoints));
-	pController->LoadElo(Runner);
+	pController->LoadStats(Runner);
 	ASSERT_TRUE(WaitForDatabase());
 	EXPECT_EQ(Score(Runner), Elo(RunnerPoints));
+	EXPECT_EQ(pController->Stats(Runner).m_Captures, 2);
+	EXPECT_EQ(pController->Stats(Runner).m_Attempts, 2);
 
 	// Fighting players show their fight points, until they leave the fight.
 	pController->Fight(Bob, "Anna");
@@ -2194,9 +2293,30 @@ TEST_F(GameWorld, GTrainEloScoreboard)
 	EXPECT_EQ(vTop[1], "1. Runner ELO: " + std::to_string(Elo(RunnerPoints)));
 	EXPECT_EQ(vTop[2], "2. Bob ELO: " + std::to_string(Elo(BobPoints)));
 
+	// /rank and /profile show all stats, captures are attempts as well.
+	for(const char *pCommand : {"/rank Runner", "/profile Runner"})
+	{
+		m_pServer->AdvanceTicks(10);
+		m_pServer->m_avChatMessages[Anna].clear();
+		Say(Anna, pCommand);
+		ASSERT_TRUE(WaitForDatabase());
+		ASSERT_FALSE(m_pServer->m_avChatMessages[Anna].empty()) << pCommand;
+		const std::string &Profile = m_pServer->m_avChatMessages[Anna].back();
+		EXPECT_TRUE(Profile.starts_with("1. Runner ELO: " + std::to_string(Elo(RunnerPoints)) + " (" + std::to_string(RunnerPoints) + " points), 2 captures, 2 attempts, 0 respawns, ")) << Profile;
+		EXPECT_TRUE(Profile.ends_with(" played, requested by Anna")) << Profile;
+	}
+	m_pServer->AdvanceTicks(10);
+	m_pServer->m_avChatMessages[Anna].clear();
+	Say(Anna, "/top5captures");
+	ASSERT_TRUE(WaitForDatabase());
+	ASSERT_EQ(vTop.size(), 4u);
+	EXPECT_EQ(vTop[0], "-------- Top Captures --------");
+	EXPECT_EQ(vTop[1], "1. Runner Captures: 2");
+	EXPECT_EQ(vTop[2], "2. Bob Captures: 1");
+
 	// ELO stops at its maximum.
-	GameServer()->Score()->AddElo(Anna, 1'000'000'000'000'000);
-	pController->LoadElo(Anna);
+	AddPoints("Anna", 1'000'000'000'000'000);
+	pController->LoadStats(Anna);
 	ASSERT_TRUE(WaitForDatabase());
 	EXPECT_EQ(Score(Anna), GTrainElo::MAX_ELO);
 }
@@ -2458,13 +2578,13 @@ TEST_F(GameWorld, GTrainHelpListsOnlyGTrainCommands)
 	m_pServer->m_avChatMessages[Runner].clear();
 	Say(Runner, "/help");
 	const auto &vMessages = m_pServer->m_avChatMessages[Runner];
-	ASSERT_EQ(vMessages.size(), 12);
+	ASSERT_EQ(vMessages.size(), 13);
 	EXPECT_EQ(vMessages.front(), "GTrain commands:");
 	EXPECT_EQ(vMessages.back(), "Captures on this map earn no ELO.");
 	std::string Help;
 	for(const auto &Message : vMessages)
 		Help += Message + "\n";
-	for(const char *pCommand : {"Kill:", "/r ", "/retry", "/fight", "/distance", "/nodj", "/scorelimit", "/shotgun", "/grenade", "/laser", "/ninja", "/freeplay", "/points", "/elo", "/top5points", "/top5elo"})
+	for(const char *pCommand : {"Kill:", "/r ", "/retry", "/fight", "/distance", "/nodj", "/scorelimit", "/shotgun", "/grenade", "/laser", "/ninja", "/freeplay", "/points", "/elo", "/top5points", "/top5elo", "/rank", "/profile", "/top5captures", "/top5attempts", "/top5respawns", "/top5playtime"})
 		EXPECT_NE(Help.find(pCommand), std::string::npos) << pCommand;
 	for(const char *pOther : {"/cmdlist", "/practice", "/team", "/settings", "/rescue"})
 		EXPECT_EQ(Help.find(pOther), std::string::npos) << pOther;

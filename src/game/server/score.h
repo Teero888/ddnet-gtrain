@@ -63,12 +63,13 @@ public:
 	void ShowTopPoints(int ClientId, int Offset = 1);
 	void ShowPoints(int ClientId, const char *pName);
 
-	// GTrain grind ELO, stored per player name
+	// GTrain stats and grind ELO, stored per player name
 	void LoadMapDifficulty(const std::shared_ptr<CScoreMapDifficultyResult> &pResult);
-	void LoadElo(int ClientId, const std::shared_ptr<CScoreEloResult> &pResult);
-	void AddElo(int ClientId, int64_t Points);
-	void ShowTopElo(int ClientId, int Offset = 1);
+	void LoadGTrainStats(const char *pName, const std::shared_ptr<CScoreGTrainStatsResult> &pResult);
+	void AddGTrainStats(const char *pName, const CGTrainStats &Stats);
+	void ShowGTrainTop(int ClientId, EGTrainStat Stat, int Offset = 1);
 	void ShowElo(int ClientId, const char *pName);
+	void ShowGTrainProfile(int ClientId, const char *pName);
 
 	void ShowTimes(int ClientId, const char *pName, int Offset = 1);
 	void ShowTimes(int ClientId, int Offset = 1);

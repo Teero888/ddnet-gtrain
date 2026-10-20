@@ -288,19 +288,19 @@ void CScore::LoadMapDifficulty(const std::shared_ptr<CScoreMapDifficultyResult> 
 	m_pPool->Execute(CScoreWorker::LoadMapDifficulty, std::move(Tmp), "load map difficulty");
 }
 
-void CScore::LoadElo(int ClientId, const std::shared_ptr<CScoreEloResult> &pResult)
+void CScore::LoadGTrainStats(const char *pName, const std::shared_ptr<CScoreGTrainStatsResult> &pResult)
 {
-	auto Tmp = std::make_unique<CSqlEloData>(pResult);
-	str_copy(Tmp->m_aName, Server()->ClientName(ClientId));
-	m_pPool->Execute(CScoreWorker::LoadElo, std::move(Tmp), "load elo");
+	auto Tmp = std::make_unique<CSqlGTrainStatsData>(pResult);
+	str_copy(Tmp->m_aName, pName);
+	m_pPool->Execute(CScoreWorker::LoadGTrainStats, std::move(Tmp), "load gtrain stats");
 }
 
-void CScore::AddElo(int ClientId, int64_t Points)
+void CScore::AddGTrainStats(const char *pName, const CGTrainStats &Stats)
 {
-	auto Tmp = std::make_unique<CSqlEloData>();
-	str_copy(Tmp->m_aName, Server()->ClientName(ClientId));
-	Tmp->m_Points = Points;
-	m_pPool->ExecuteWrite(CScoreWorker::AddElo, std::move(Tmp), "add elo");
+	auto Tmp = std::make_unique<CSqlGTrainStatsData>();
+	str_copy(Tmp->m_aName, pName);
+	Tmp->m_Stats = Stats;
+	m_pPool->ExecuteWrite(CScoreWorker::AddGTrainStats, std::move(Tmp), "add gtrain stats");
 }
 
 void CScore::ShowElo(int ClientId, const char *pName)
@@ -310,11 +310,28 @@ void CScore::ShowElo(int ClientId, const char *pName)
 	ExecPlayerThread(CScoreWorker::ShowElo, "show elo", ClientId, pName, 0);
 }
 
-void CScore::ShowTopElo(int ClientId, int Offset)
+void CScore::ShowGTrainProfile(int ClientId, const char *pName)
 {
 	if(RateLimitPlayer(ClientId))
 		return;
-	ExecPlayerThread(CScoreWorker::ShowTopElo, "show top elo", ClientId, "", Offset);
+	ExecPlayerThread(CScoreWorker::ShowGTrainProfile, "show gtrain profile", ClientId, pName, 0);
+}
+
+void CScore::ShowGTrainTop(int ClientId, EGTrainStat Stat, int Offset)
+{
+	if(RateLimitPlayer(ClientId))
+		return;
+	auto pResult = NewSqlPlayerResult(ClientId);
+	if(pResult == nullptr)
+		return;
+	auto Tmp = std::make_unique<CSqlGTrainTopRequest>(pResult);
+	Tmp->m_aName[0] = '\0';
+	str_copy(Tmp->m_aMap, GameServer()->Map()->BaseName());
+	str_copy(Tmp->m_aServer, g_Config.m_SvSqlServerName);
+	str_copy(Tmp->m_aRequestingPlayer, Server()->ClientName(ClientId));
+	Tmp->m_Offset = Offset;
+	Tmp->m_Stat = Stat;
+	m_pPool->Execute(CScoreWorker::ShowGTrainTop, std::move(Tmp), "show gtrain top");
 }
 
 void CScore::RandomMap(int ClientId, int MinStars, int MaxStars)

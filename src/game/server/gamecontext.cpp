@@ -2909,7 +2909,7 @@ void CGameContext::OnChangeInfoNetMessage(const CNetMsg_Cl_ChangeInfo *pMsg, int
 		Server()->SetClientScore(ClientId, std::nullopt);
 		Score()->LoadPlayerData(ClientId);
 		if(auto *pController = dynamic_cast<CGameControllerGTrain *>(m_pController))
-			pController->LoadElo(ClientId);
+			pController->LoadStats(ClientId);
 
 		SixupNeedsUpdate = true;
 
@@ -4087,7 +4087,7 @@ void CGameContext::RegisterChatCommands()
 	Console()->Register("rankteam", "?r[player name]", CFGFLAG_CHAT | CFGFLAG_SERVER, ConTeamRank, this, "Shows the team rank of player with name r (your team rank by default)");
 	Console()->Register("teamrank", "?r[player name]", CFGFLAG_CHAT | CFGFLAG_SERVER, ConTeamRank, this, "Shows the team rank of player with name r (your team rank by default)");
 
-	Console()->Register("rank", "?r[player name]", CFGFLAG_CHAT | CFGFLAG_SERVER, ConRank, this, "Shows the rank of player with name r (your rank by default)");
+	Console()->Register("rank", "?r[player name]", CFGFLAG_CHAT | CFGFLAG_SERVER, ConRank, this, "Shows the rank of player with name r (your rank by default), the GTrain profile in GTrain");
 	Console()->Register("top5team", "?s[player name] ?i[rank to start with]", CFGFLAG_CHAT | CFGFLAG_SERVER, ConTeamTop5, this, "Shows five team ranks of the ladder or of a player beginning with rank i (1 by default, -1 for worst)");
 	Console()->Register("teamtop5", "?s[player name] ?i[rank to start with]", CFGFLAG_CHAT | CFGFLAG_SERVER, ConTeamTop5, this, "Shows five team ranks of the ladder or of a player beginning with rank i (1 by default, -1 for worst)");
 	Console()->Register("top", "?i[rank to start with]", CFGFLAG_CHAT | CFGFLAG_SERVER, ConTop, this, "Shows the top ranks of the global and regional ladder beginning with rank i (1 by default, -1 for worst)");
@@ -4097,6 +4097,11 @@ void CGameContext::RegisterChatCommands()
 	Console()->Register("top5points", "?i[number]", CFGFLAG_CHAT | CFGFLAG_SERVER, ConTopPoints, this, "Shows five points of the global point ladder beginning with rank i (1 by default), the ELO ladder in GTrain");
 	Console()->Register("elo", "?r[player name]", CFGFLAG_CHAT | CFGFLAG_SERVER, ConElo, this, "Shows the GTrain ELO of a player (yours by default)");
 	Console()->Register("top5elo", "?i[number]", CFGFLAG_CHAT | CFGFLAG_SERVER, ConTopElo, this, "Shows five players of the GTrain ELO ladder beginning with rank i (1 by default)");
+	Console()->Register("profile", "?r[player name]", CFGFLAG_CHAT | CFGFLAG_SERVER, ConProfile, this, "Shows the GTrain stats and playtime of a player (yours by default)");
+	Console()->Register("top5captures", "?i[number]", CFGFLAG_CHAT | CFGFLAG_SERVER, ConTopCaptures, this, "Shows five players of the GTrain flag capture ladder beginning with rank i (1 by default)");
+	Console()->Register("top5attempts", "?i[number]", CFGFLAG_CHAT | CFGFLAG_SERVER, ConTopAttempts, this, "Shows five players of the GTrain attempt ladder beginning with rank i (1 by default)");
+	Console()->Register("top5respawns", "?i[number]", CFGFLAG_CHAT | CFGFLAG_SERVER, ConTopRespawns, this, "Shows five players of the GTrain respawn ladder beginning with rank i (1 by default)");
+	Console()->Register("top5playtime", "?i[number]", CFGFLAG_CHAT | CFGFLAG_SERVER, ConTopPlaytime, this, "Shows five players of the GTrain playtime ladder beginning with rank i (1 by default)");
 	Console()->Register("timecp", "?r[player name]", CFGFLAG_CHAT | CFGFLAG_SERVER, ConTimeCP, this, "Set your checkpoints based on another player");
 
 	Console()->Register("team", "?i[id]", CFGFLAG_CHAT | CFGFLAG_SERVER, ConTeam, this, "Lets you join team i (shows your team if left blank)");

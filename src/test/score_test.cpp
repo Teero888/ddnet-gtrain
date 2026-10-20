@@ -50,7 +50,7 @@ struct Score : public testing::TestWithParam<IDbConnection *> // NOLINT(readabil
 		ASSERT_TRUE(m_pConn->ExecuteUpdate(&NumInserted, m_aError, sizeof(m_aError))) << m_aError;
 		ASSERT_TRUE(m_pConn->PrepareStatement("DELETE FROM record_points", m_aError, sizeof(m_aError))) << m_aError;
 		ASSERT_TRUE(m_pConn->ExecuteUpdate(&NumInserted, m_aError, sizeof(m_aError))) << m_aError;
-		ASSERT_TRUE(m_pConn->PrepareStatement("DELETE FROM record_elo", m_aError, sizeof(m_aError))) << m_aError;
+		ASSERT_TRUE(m_pConn->PrepareStatement("DELETE FROM record_gtrain_stats", m_aError, sizeof(m_aError))) << m_aError;
 		ASSERT_TRUE(m_pConn->ExecuteUpdate(&NumInserted, m_aError, sizeof(m_aError))) << m_aError;
 		ASSERT_TRUE(m_pConn->PrepareStatement("DELETE FROM record_saves", m_aError, sizeof(m_aError))) << m_aError;
 		ASSERT_TRUE(m_pConn->ExecuteUpdate(&NumInserted, m_aError, sizeof(m_aError))) << m_aError;
@@ -667,12 +667,19 @@ struct Elo : public Score // NOLINT(readability-identifier-naming)
 		m_PlayerRequest.m_Offset = 0;
 	}
 
+	void AddStats(const char *pName, const CGTrainStats &Stats, Write w = Write::NORMAL)
+	{
+		CSqlGTrainStatsData Data;
+		str_copy(Data.m_aName, pName);
+		Data.m_Stats = Stats;
+		ASSERT_TRUE(CScoreWorker::AddGTrainStats(m_pConn, &Data, w, m_aError, sizeof(m_aError))) << m_aError;
+	}
+
 	void AddPoints(const char *pName, int64_t Points, Write w = Write::NORMAL)
 	{
-		CSqlEloData EloData;
-		str_copy(EloData.m_aName, pName);
-		EloData.m_Points = Points;
-		ASSERT_TRUE(CScoreWorker::AddElo(m_pConn, &EloData, w, m_aError, sizeof(m_aError))) << m_aError;
+		CGTrainStats Stats;
+		Stats.m_Points = Points;
+		AddStats(pName, Stats, w);
 	}
 
 	static std::string EloText(int64_t Points)
@@ -685,6 +692,15 @@ struct Elo : public Score // NOLINT(readability-identifier-naming)
 		m_pPlayerResult = std::make_shared<CScorePlayerResult>();
 		m_PlayerRequest.m_pResult = m_pPlayerResult;
 	}
+
+	void ShowTop(EGTrainStat Stat, int Offset = 0)
+	{
+		Reset();
+		CSqlGTrainTopRequest Request(m_pPlayerResult);
+		Request.m_Offset = Offset;
+		Request.m_Stat = Stat;
+		ASSERT_TRUE(CScoreWorker::ShowGTrainTop(m_pConn, &Request, m_aError, sizeof(m_aError))) << m_aError;
+	}
 };
 
 TEST_P(Elo, NoElo)
@@ -695,7 +711,7 @@ TEST_P(Elo, NoElo)
 
 TEST_P(Elo, NoEloTop)
 {
-	ASSERT_TRUE(CScoreWorker::ShowTopElo(m_pConn, &m_PlayerRequest, m_aError, sizeof(m_aError))) << m_aError;
+	ShowTop(EGTrainStat::POINTS);
 	ExpectLines(m_pPlayerResult, {"-------- Top ELO --------",
 					     "-------------------------------"});
 }
@@ -712,25 +728,35 @@ TEST_P(Elo, PointsAddUp)
 
 TEST_P(Elo, Load)
 {
-	AddPoints("nameless tee", 100);
-	AddPoints("nameless tee", 200);
+	CGTrainStats Stats;
+	Stats.m_Points = 100;
+	Stats.m_Captures = 1;
+	Stats.m_Attempts = 3;
+	Stats.m_Respawns = 1;
+	Stats.m_Playtime = 70;
+	AddStats("nameless tee", Stats);
+	AddStats("nameless tee", Stats);
 	AddPoints("brainless tee", 1);
-	auto pResult = std::make_shared<CScoreEloResult>();
-	CSqlEloData Request(pResult);
+	auto pResult = std::make_shared<CScoreGTrainStatsResult>();
+	CSqlGTrainStatsData Request(pResult);
 	str_copy(Request.m_aName, "nameless tee");
-	ASSERT_TRUE(CScoreWorker::LoadElo(m_pConn, &Request, m_aError, sizeof(m_aError))) << m_aError;
-	EXPECT_EQ(pResult->m_Points, 300);
+	ASSERT_TRUE(CScoreWorker::LoadGTrainStats(m_pConn, &Request, m_aError, sizeof(m_aError))) << m_aError;
+	EXPECT_EQ(pResult->m_Stats.m_Points, 200);
+	EXPECT_EQ(pResult->m_Stats.m_Captures, 2);
+	EXPECT_EQ(pResult->m_Stats.m_Attempts, 6);
+	EXPECT_EQ(pResult->m_Stats.m_Respawns, 2);
+	EXPECT_EQ(pResult->m_Stats.m_Playtime, 140);
 
-	auto pMissing = std::make_shared<CScoreEloResult>();
-	CSqlEloData MissingRequest(pMissing);
+	auto pMissing = std::make_shared<CScoreGTrainStatsResult>();
+	CSqlGTrainStatsData MissingRequest(pMissing);
 	str_copy(MissingRequest.m_aName, "tee");
-	ASSERT_TRUE(CScoreWorker::LoadElo(m_pConn, &MissingRequest, m_aError, sizeof(m_aError))) << m_aError;
-	EXPECT_EQ(pMissing->m_Points, 0);
+	ASSERT_TRUE(CScoreWorker::LoadGTrainStats(m_pConn, &MissingRequest, m_aError, sizeof(m_aError))) << m_aError;
+	EXPECT_TRUE(pMissing->m_Stats.IsEmpty());
 }
 
 TEST_P(Elo, OnlyTheMainDatabaseCounts)
 {
-	// Like DDNet points, ELO points are not kept in backup databases.
+	// Like DDNet points, GTrain stats are not kept in backup databases.
 	AddPoints("nameless tee", 100, Write::BACKUP_FIRST);
 	AddPoints("nameless tee", 100, Write::NORMAL_SUCCEEDED);
 	AddPoints("nameless tee", 100, Write::NORMAL_FAILED);
@@ -757,8 +783,7 @@ TEST_P(Elo, RanksAndTopByPoints)
 	ExpectLines(m_pPlayerResult, {Second.c_str()}, true);
 
 	AddPoints("nameless tee", 1'000'000'000);
-	Reset();
-	ASSERT_TRUE(CScoreWorker::ShowTopElo(m_pConn, &m_PlayerRequest, m_aError, sizeof(m_aError))) << m_aError;
+	ShowTop(EGTrainStat::POINTS);
 	const std::string Brainless = "1. brainless tee ELO: " + EloText(3'000'000'000);
 	const std::string Nameless = "1. nameless tee ELO: " + EloText(3'000'000'000);
 	const std::string Tee = "3. tee ELO: " + EloText(1'000'000'000);
@@ -769,13 +794,66 @@ TEST_P(Elo, RanksAndTopByPoints)
 			Tee.c_str(),
 			"-------------------------------"});
 
-	Reset();
-	m_PlayerRequest.m_Offset = 3;
-	ASSERT_TRUE(CScoreWorker::ShowTopElo(m_pConn, &m_PlayerRequest, m_aError, sizeof(m_aError))) << m_aError;
+	ShowTop(EGTrainStat::POINTS, 3);
 	ExpectLines(m_pPlayerResult,
 		{"-------- Top ELO --------",
 			Tee.c_str(),
 			"-------------------------------"});
+}
+
+TEST_P(Elo, Profile)
+{
+	ASSERT_TRUE(CScoreWorker::ShowGTrainProfile(m_pConn, &m_PlayerRequest, m_aError, sizeof(m_aError))) << m_aError;
+	ExpectLines(m_pPlayerResult, {"nameless tee has not played GTrain so far"});
+
+	CGTrainStats Stats;
+	Stats.m_Points = 2'000'000'000;
+	Stats.m_Captures = 12;
+	Stats.m_Attempts = 34;
+	Stats.m_Respawns = 5;
+	Stats.m_Playtime = 2 * 3600 + 7 * 60 + 59;
+	AddStats("nameless tee", Stats);
+	AddPoints("brainless tee", 3'000'000'000);
+	Reset();
+	ASSERT_TRUE(CScoreWorker::ShowGTrainProfile(m_pConn, &m_PlayerRequest, m_aError, sizeof(m_aError))) << m_aError;
+	const std::string Line = "2. nameless tee ELO: " + EloText(2'000'000'000) + " (2000000000 points), 12 captures, 34 attempts, 5 respawns, 2h 07m played, requested by brainless tee";
+	ExpectLines(m_pPlayerResult, {Line.c_str()}, true);
+
+	// Single counts aren't plural.
+	CGTrainStats One;
+	One.m_Captures = One.m_Attempts = One.m_Respawns = 1;
+	One.m_Playtime = 59;
+	AddStats("tee", One);
+	str_copy(m_PlayerRequest.m_aName, "tee");
+	Reset();
+	ASSERT_TRUE(CScoreWorker::ShowGTrainProfile(m_pConn, &m_PlayerRequest, m_aError, sizeof(m_aError))) << m_aError;
+	ExpectLines(m_pPlayerResult, {"3. tee ELO: 0 (0 points), 1 capture, 1 attempt, 1 respawn, 0h 00m played, requested by brainless tee"}, true);
+}
+
+TEST_P(Elo, LaddersOfEveryStat)
+{
+	CGTrainStats Anna, Bob;
+	Anna.m_Captures = 3;
+	Anna.m_Attempts = 10;
+	Anna.m_Playtime = 3600;
+	Bob.m_Captures = 5;
+	Bob.m_Attempts = 7;
+	Bob.m_Respawns = 2;
+	Bob.m_Playtime = 125 * 60;
+	AddStats("Anna", Anna);
+	AddStats("Bob", Bob);
+
+	ShowTop(EGTrainStat::CAPTURES);
+	ExpectLines(m_pPlayerResult, {"-------- Top Captures --------", "1. Bob Captures: 5", "2. Anna Captures: 3", "-------------------------------"});
+	ShowTop(EGTrainStat::ATTEMPTS);
+	ExpectLines(m_pPlayerResult, {"-------- Top Attempts --------", "1. Anna Attempts: 10", "2. Bob Attempts: 7", "-------------------------------"});
+	// Players without respawns are left out.
+	ShowTop(EGTrainStat::RESPAWNS);
+	ExpectLines(m_pPlayerResult, {"-------- Top Respawns --------", "1. Bob Respawns: 2", "-------------------------------"});
+	ShowTop(EGTrainStat::PLAYTIME);
+	ExpectLines(m_pPlayerResult, {"-------- Top Playtime --------", "1. Bob Playtime: 2h 05m", "2. Anna Playtime: 1h 00m", "-------------------------------"});
+	ShowTop(EGTrainStat::POINTS);
+	ExpectLines(m_pPlayerResult, {"-------- Top ELO --------", "-------------------------------"});
 }
 
 TEST_P(Elo, MapDifficulty)

@@ -8,6 +8,7 @@
 #include <engine/shared/protocol.h>
 #include <engine/shared/uuid_manager.h>
 
+#include <game/server/gamemodes/gtrain_elo.h>
 #include <game/server/save.h>
 #include <game/voting.h>
 
@@ -101,21 +102,21 @@ struct CSqlMapDifficultyRequest : ISqlData
 	char m_aMap[MAX_MAP_LENGTH];
 };
 
-struct CScoreEloResult : ISqlResult
+struct CScoreGTrainStatsResult : ISqlResult
 {
-	int64_t m_Points = 0;
+	CGTrainStats m_Stats;
 };
 
-struct CSqlEloData : ISqlData
+struct CSqlGTrainStatsData : ISqlData
 {
-	// Loading ELO has a result, adding it has none.
-	CSqlEloData(std::shared_ptr<CScoreEloResult> pResult = nullptr) :
+	// Loading stats has a result, adding to them has none.
+	CSqlGTrainStatsData(std::shared_ptr<CScoreGTrainStatsResult> pResult = nullptr) :
 		ISqlData(std::move(pResult))
 	{
 	}
 
 	char m_aName[MAX_NAME_LENGTH];
-	int64_t m_Points = 0;
+	CGTrainStats m_Stats; // to add
 };
 
 struct CSqlPlayerRequest : ISqlData
@@ -133,6 +134,13 @@ struct CSqlPlayerRequest : ISqlData
 	// relevant for /top5 kind of requests
 	int m_Offset;
 	char m_aServer[5];
+};
+
+struct CSqlGTrainTopRequest : CSqlPlayerRequest
+{
+	using CSqlPlayerRequest::CSqlPlayerRequest;
+
+	EGTrainStat m_Stat;
 };
 
 struct CScoreRandomMapResult : ISqlResult
@@ -349,9 +357,10 @@ struct CScoreWorker
 	static bool ShowPoints(IDbConnection *pSqlServer, const ISqlData *pGameData, char *pError, int ErrorSize);
 	static bool ShowTopPoints(IDbConnection *pSqlServer, const ISqlData *pGameData, char *pError, int ErrorSize);
 	static bool LoadMapDifficulty(IDbConnection *pSqlServer, const ISqlData *pGameData, char *pError, int ErrorSize);
-	static bool LoadElo(IDbConnection *pSqlServer, const ISqlData *pGameData, char *pError, int ErrorSize);
+	static bool LoadGTrainStats(IDbConnection *pSqlServer, const ISqlData *pGameData, char *pError, int ErrorSize);
 	static bool ShowElo(IDbConnection *pSqlServer, const ISqlData *pGameData, char *pError, int ErrorSize);
-	static bool ShowTopElo(IDbConnection *pSqlServer, const ISqlData *pGameData, char *pError, int ErrorSize);
+	static bool ShowGTrainProfile(IDbConnection *pSqlServer, const ISqlData *pGameData, char *pError, int ErrorSize);
+	static bool ShowGTrainTop(IDbConnection *pSqlServer, const ISqlData *pGameData, char *pError, int ErrorSize);
 	static bool GetSaves(IDbConnection *pSqlServer, const ISqlData *pGameData, char *pError, int ErrorSize);
 
 	static bool SaveTeam(IDbConnection *pSqlServer, const ISqlData *pGameData, Write w, char *pError, int ErrorSize);
@@ -359,7 +368,7 @@ struct CScoreWorker
 
 	static bool SaveScore(IDbConnection *pSqlServer, const ISqlData *pGameData, Write w, char *pError, int ErrorSize);
 	static bool SaveTeamScore(IDbConnection *pSqlServer, const ISqlData *pGameData, Write w, char *pError, int ErrorSize);
-	static bool AddElo(IDbConnection *pSqlServer, const ISqlData *pGameData, Write w, char *pError, int ErrorSize);
+	static bool AddGTrainStats(IDbConnection *pSqlServer, const ISqlData *pGameData, Write w, char *pError, int ErrorSize);
 };
 
 #endif // GAME_SERVER_SCOREWORKER_H

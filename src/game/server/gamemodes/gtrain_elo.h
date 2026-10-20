@@ -68,4 +68,37 @@ namespace GTrainElo
 	}
 }
 
+// A player's GTrain totals, or changes to them.
+struct CGTrainStats
+{
+	int64_t m_Points = 0;
+	int m_Captures = 0;
+	int m_Attempts = 0;
+	int m_Respawns = 0;
+	int m_Playtime = 0; // seconds
+
+	void Add(const CGTrainStats &Other)
+	{
+		m_Points += Other.m_Points;
+		m_Captures += Other.m_Captures;
+		m_Attempts += Other.m_Attempts;
+		m_Respawns += Other.m_Respawns;
+		m_Playtime += Other.m_Playtime;
+	}
+	bool IsEmpty() const
+	{
+		return !m_Points && !m_Captures && !m_Attempts && !m_Respawns && !m_Playtime;
+	}
+};
+
+// The stats with a /top5 ladder.
+enum class EGTrainStat
+{
+	POINTS,
+	CAPTURES,
+	ATTEMPTS,
+	RESPAWNS,
+	PLAYTIME,
+};
+
 #endif // GAME_SERVER_GAMEMODES_GTRAIN_ELO_H

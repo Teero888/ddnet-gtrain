@@ -53,6 +53,7 @@ class CConfig;
 class CHeap;
 class CPlayer;
 class CScore;
+enum class EGTrainStat;
 class CUnpacker;
 class CRconRole;
 class IAntibot;
@@ -516,7 +517,14 @@ private:
 	static void ConPoints(IConsole::IResult *pResult, void *pUserData);
 	static void ConTopPoints(IConsole::IResult *pResult, void *pUserData);
 	static void ConElo(IConsole::IResult *pResult, void *pUserData);
+	static void ConProfile(IConsole::IResult *pResult, void *pUserData);
 	static void ConTopElo(IConsole::IResult *pResult, void *pUserData);
+	static void ConTopCaptures(IConsole::IResult *pResult, void *pUserData);
+	static void ConTopAttempts(IConsole::IResult *pResult, void *pUserData);
+	static void ConTopRespawns(IConsole::IResult *pResult, void *pUserData);
+	static void ConTopPlaytime(IConsole::IResult *pResult, void *pUserData);
+	void ShowGTrainPlayer(IConsole::IResult *pResult, bool Profile);
+	void ShowGTrainTop(IConsole::IResult *pResult, EGTrainStat Stat);
 	static void ConTimeCP(IConsole::IResult *pResult, void *pUserData);
 
 	static void ConDND(IConsole::IResult *pResult, void *pUserData);

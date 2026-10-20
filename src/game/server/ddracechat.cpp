@@ -951,6 +951,12 @@ void CGameContext::ConRank(IConsole::IResult *pResult, void *pUserData)
 	CGameContext *pSelf = (CGameContext *)pUserData;
 	if(!CheckClientId(pResult->m_ClientId))
 		return;
+	// GTrain attempts never finish the map, its players have profiles.
+	if(dynamic_cast<CGameControllerGTrain *>(pSelf->m_pController))
+	{
+		ConProfile(pResult, pUserData);
+		return;
+	}
 
 	if(pResult->NumArguments() > 0)
 	{
@@ -2453,50 +2459,82 @@ void CGameContext::ConTopPoints(IConsole::IResult *pResult, void *pUserData)
 		pSelf->Score()->ShowTopPoints(pResult->m_ClientId);
 }
 
-void CGameContext::ConElo(IConsole::IResult *pResult, void *pUserData)
+void CGameContext::ShowGTrainPlayer(IConsole::IResult *pResult, bool Profile)
 {
-	CGameContext *pSelf = (CGameContext *)pUserData;
 	if(!CheckClientId(pResult->m_ClientId))
 		return;
-	if(!dynamic_cast<CGameControllerGTrain *>(pSelf->m_pController))
+	auto *pController = dynamic_cast<CGameControllerGTrain *>(m_pController);
+	if(!pController)
 	{
-		pSelf->SendChatTarget(pResult->m_ClientId, "ELO is only available in GTrain.");
+		SendChatTarget(pResult->m_ClientId, Profile ? "Profiles are only available in GTrain." : "ELO is only available in GTrain.");
 		return;
 	}
-
-	if(pResult->NumArguments() > 0)
+	if(pResult->NumArguments() > 0 && g_Config.m_SvHideScore)
 	{
-		if(!g_Config.m_SvHideScore)
-			pSelf->Score()->ShowElo(pResult->m_ClientId, pResult->GetString(0));
-		else
-			log_info("chatresp", "Showing the ELO of other players is not allowed on this server.");
+		log_info("chatresp", "Showing the %s of other players is not allowed on this server.", Profile ? "profile" : "ELO");
+		return;
 	}
+	const char *pName = pResult->NumArguments() > 0 ? pResult->GetString(0) : Server()->ClientName(pResult->m_ClientId);
+	// Unsaved changes are queued first, the database runs jobs in order.
+	pController->SaveAllStats();
+	if(Profile)
+		Score()->ShowGTrainProfile(pResult->m_ClientId, pName);
 	else
-		pSelf->Score()->ShowElo(pResult->m_ClientId,
-			pSelf->Server()->ClientName(pResult->m_ClientId));
+		Score()->ShowElo(pResult->m_ClientId, pName);
+}
+
+void CGameContext::ShowGTrainTop(IConsole::IResult *pResult, EGTrainStat Stat)
+{
+	if(!CheckClientId(pResult->m_ClientId))
+		return;
+	auto *pController = dynamic_cast<CGameControllerGTrain *>(m_pController);
+	if(!pController)
+	{
+		SendChatTarget(pResult->m_ClientId, "These ladders are only available in GTrain.");
+		return;
+	}
+	if(g_Config.m_SvHideScore)
+	{
+		log_info("chatresp", "Showing the ladders is not allowed on this server.");
+		return;
+	}
+	pController->SaveAllStats();
+	Score()->ShowGTrainTop(pResult->m_ClientId, Stat, pResult->NumArguments() > 0 ? pResult->GetInteger(0) : 1);
+}
+
+void CGameContext::ConElo(IConsole::IResult *pResult, void *pUserData)
+{
+	((CGameContext *)pUserData)->ShowGTrainPlayer(pResult, false);
+}
+
+void CGameContext::ConProfile(IConsole::IResult *pResult, void *pUserData)
+{
+	((CGameContext *)pUserData)->ShowGTrainPlayer(pResult, true);
 }
 
 void CGameContext::ConTopElo(IConsole::IResult *pResult, void *pUserData)
 {
-	CGameContext *pSelf = (CGameContext *)pUserData;
-	if(!CheckClientId(pResult->m_ClientId))
-		return;
-	if(!dynamic_cast<CGameControllerGTrain *>(pSelf->m_pController))
-	{
-		pSelf->SendChatTarget(pResult->m_ClientId, "ELO is only available in GTrain.");
-		return;
-	}
+	((CGameContext *)pUserData)->ShowGTrainTop(pResult, EGTrainStat::POINTS);
+}
 
-	if(g_Config.m_SvHideScore)
-	{
-		log_info("chatresp", "Showing the ELO ladder is not allowed on this server.");
-		return;
-	}
+void CGameContext::ConTopCaptures(IConsole::IResult *pResult, void *pUserData)
+{
+	((CGameContext *)pUserData)->ShowGTrainTop(pResult, EGTrainStat::CAPTURES);
+}
 
-	if(pResult->NumArguments() > 0)
-		pSelf->Score()->ShowTopElo(pResult->m_ClientId, pResult->GetInteger(0));
-	else
-		pSelf->Score()->ShowTopElo(pResult->m_ClientId);
+void CGameContext::ConTopAttempts(IConsole::IResult *pResult, void *pUserData)
+{
+	((CGameContext *)pUserData)->ShowGTrainTop(pResult, EGTrainStat::ATTEMPTS);
+}
+
+void CGameContext::ConTopRespawns(IConsole::IResult *pResult, void *pUserData)
+{
+	((CGameContext *)pUserData)->ShowGTrainTop(pResult, EGTrainStat::RESPAWNS);
+}
+
+void CGameContext::ConTopPlaytime(IConsole::IResult *pResult, void *pUserData)
+{
+	((CGameContext *)pUserData)->ShowGTrainTop(pResult, EGTrainStat::PLAYTIME);
 }
 
 void CGameContext::ConTimeCP(IConsole::IResult *pResult, void *pUserData)

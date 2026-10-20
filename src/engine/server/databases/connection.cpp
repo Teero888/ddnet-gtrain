@@ -114,13 +114,18 @@ void IDbConnection::FormatCreatePoints(char *aBuf, unsigned int BufferSize) cons
 		GetPrefix(), MAX_NAME_LENGTH_SQL, BinaryCollate());
 }
 
-void IDbConnection::FormatCreateElo(char *aBuf, unsigned int BufferSize) const
+void IDbConnection::FormatCreateGTrainStats(char *aBuf, unsigned int BufferSize) const
 {
-	// GTrain grind points per player name, they only ever grow.
+	// GTrain totals per player name, they only ever grow. Playtime is in
+	// seconds.
 	str_format(aBuf, BufferSize,
-		"CREATE TABLE IF NOT EXISTS %s_elo ("
+		"CREATE TABLE IF NOT EXISTS %s_gtrain_stats ("
 		"  Name VARCHAR(%d) COLLATE %s NOT NULL, "
 		"  Points BIGINT DEFAULT 0, "
+		"  Captures INT DEFAULT 0, "
+		"  Attempts INT DEFAULT 0, "
+		"  Respawns INT DEFAULT 0, "
+		"  Playtime INT DEFAULT 0, "
 		"  PRIMARY KEY (Name)"
 		")",
 		GetPrefix(), MAX_NAME_LENGTH_SQL, BinaryCollate());

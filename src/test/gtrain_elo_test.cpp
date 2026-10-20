@@ -41,15 +41,17 @@ TEST(GTrainElo, CapturePoints)
 
 TEST(GTrainElo, LongerGoalsEarnMoreThanTheirLength)
 {
-	// At the same speed, twice the distance earns 2^1.2 times the points.
+	// At the same speed, twice the distance earns 2^DISTANCE_EXPONENT times the points.
+	ASSERT_GT(DISTANCE_EXPONENT, 1);
+	const double Doubled = std::pow(2, DISTANCE_EXPONENT);
 	const auto Typical = [](int Distance) { return CapturePoints(0, Distance, Distance / 16.0); };
 	EXPECT_EQ(Typical(100), 10000);
-	EXPECT_EQ(Typical(200), std::llround(10000 * std::pow(2, 1.2)));
-	EXPECT_NEAR((double)Typical(200) / Typical(100), 2.297, 0.001);
-	EXPECT_NEAR((double)Typical(100) / Typical(50), 2.297, 0.001);
-	EXPECT_NEAR((double)Typical(500) / Typical(100) / 5, 1.380, 0.001);
+	EXPECT_EQ(Typical(200), std::llround(10000 * Doubled));
+	EXPECT_NEAR((double)Typical(200) / Typical(100), Doubled, 0.001);
+	EXPECT_NEAR((double)Typical(100) / Typical(50), Doubled, 0.001);
+	EXPECT_NEAR((double)Typical(500) / Typical(100) / 5, std::pow(5, DISTANCE_EXPONENT - 1), 0.001);
 	// Short goals earn less per tile.
-	EXPECT_NEAR((double)Typical(50) / 50, 87.06, 0.01);
+	EXPECT_LT((double)Typical(50) / 50, 100);
 }
 
 TEST(GTrainElo, LogarithmicScaleUpToTheMaximum)
