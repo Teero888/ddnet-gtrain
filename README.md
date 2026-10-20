@@ -34,7 +34,7 @@ A server-side [DDNet](https://github.com/ddnet/ddnet) mod for training Gores map
 
 Every capture earns points, and your ELO shows them on a scale from 0 to 9999. Both only ever grow. They are stored per player name in the server's database, like DDNet points.
 
-- A capture earns points for every tile of the goal's path distance: 100 on Easy maps with one star, and 1.5 times as many for each star or difficulty step above that:
+- A capture earns points for every tile of the goal's path distance: 100 on Easy maps with one star, and 1.5 times as many for each star or difficulty step above that. These are the points per tile of a 100 tile goal:
 
   | | ★☆☆ | ★★☆ | ★★★ |
   | --- | --: | --: | --: |
@@ -44,6 +44,7 @@ Every capture earns points, and your ELO shows them on a scale from 0 to 9999. B
   | Insane | 3844 | 5767 | 8650 |
   | Extreme | 12975 | 19462 | 29193 |
 
+- Longer goals are worth more than their length, since every tile is another chance to fail: points grow with the distance to the power of 1.2, so twice the distance earns about 2.3 times as many. Per tile, 50 tile goals earn 0.87 times the table's points, 200 tiles 1.15 times and 500 tiles 1.38 times.
 - That is multiplied by your speed compared to a typical one, from 16 path tiles per second on Easy down to 8 on Extreme (measured from captures on the KoG maps). Faster captures earn more without a limit, slow ones still earn at least half. Only the time of the successful attempt counts.
 - The distance is the goal's actual distance, which is shorter than the `/distance` setting when the finish line is closer.
 - ELO is logarithmic: it grows by about 760 every time your points double, so new players climb fast and harder maps keep raising it. A single capture barely counts on its own. Rough guide, at a typical speed:

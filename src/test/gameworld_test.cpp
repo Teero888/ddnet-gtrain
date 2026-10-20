@@ -2022,12 +2022,12 @@ TEST_F(GameWorld, GTrainCapturesEarnEloByDifficultySpeedAndGoalDistance)
 
 	// Instant captures are as fast as it gets.
 	pController->SetMapDifficulty("Hard", 2);
-	EXPECT_EQ(Help(), "Captures here earn 1709 points per goal tile (Hard ★★☆), scaled by your speed (at least half).");
+	EXPECT_EQ(Help(), "A 100 tile goal here earns 170859 points at a typical speed (Hard ★★☆), longer and faster ones more.");
 	int Tiles = GoalTiles(Runner);
 	ASSERT_GT(Tiles, 0);
 	EXPECT_NE(Capture(Runner).find("(0 fails, " + Gain(Runner, 7, Tiles, 0) + ")."), std::string::npos);
 	// They take one tick, at Hard 2 star's typical speed of 12 tiles per second.
-	EXPECT_EQ(aPoints[Runner], std::llround(Tiles * GTrainElo::PointsPerTile(7) * (Tiles * SERVER_TICK_SPEED / 12.0)));
+	EXPECT_EQ(aPoints[Runner], std::llround(100 * std::pow(Tiles / 100.0, 1.2) * GTrainElo::PointsPerTile(7) * (Tiles * SERVER_TICK_SPEED / 12.0)));
 	// Longer goals earn more, retries don't change what a capture earns. The
 	// corridor is too short for /distance, which takes at least 50 tiles.
 	g_Config.m_SvGtrainGoalDistance = 6;

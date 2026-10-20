@@ -36,9 +36,10 @@ namespace GTrainElo
 		return Points;
 	}
 
-	// The maximum takes 1000 hours of Extreme 3 star captures at 8000 tiles
-	// per hour, all twice as fast as typical. Good players managed about half
-	// that pace at a typical speed, so this is completely inhuman.
+	// The maximum takes 1000 hours of Extreme 3 star captures of 100 tile
+	// goals at 8000 tiles per hour, all twice as fast as typical. Good players
+	// managed about half that pace at a typical speed, so this is completely
+	// inhuman.
 	inline constexpr double MAX_POINTS = 1000.0 * 8000 * PointsPerTile(MAX_STEP) * 2;
 
 	// The capture's speed relative to the typical one of its difficulty.
@@ -48,9 +49,16 @@ namespace GTrainElo
 		return std::max(Distance / std::max(Seconds, MIN_SECONDS) / Typical, MIN_SPEED_FACTOR);
 	}
 
+	// Long goals are harder than their length, every tile is another chance
+	// to fail. Twice the distance earns 2^1.5, about 2.8 times the points.
+	// Goals of the default 100 tiles earn the points per tile.
+	inline constexpr double DISTANCE_EXPONENT = 1.5;
+	inline constexpr double REFERENCE_DISTANCE = 100;
+
 	inline int64_t CapturePoints(int Step, int Distance, double Seconds)
 	{
-		return std::llround(Distance * PointsPerTile(Step) * SpeedFactor(Step, Distance, Seconds));
+		const double Tiles = REFERENCE_DISTANCE * std::pow(Distance / REFERENCE_DISTANCE, DISTANCE_EXPONENT);
+		return std::llround(Tiles * PointsPerTile(Step) * SpeedFactor(Step, Distance, Seconds));
 	}
 
 	inline double FromPoints(int64_t Points)
