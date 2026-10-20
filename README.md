@@ -6,7 +6,7 @@ A server-side [DDNet](https://github.com/ddnet/ddnet) mod for training Gores map
 
 - Every spawn puts you at a random spot between the start and the finish line, always above freeze and more than 50 path tiles past the start line, since map starts are usually easy. You hover frozen for one second, then play.
 - While hovering you stand on a small laser door that opens exactly at the release. Clients predict it like any map door, so the start looks the same at every ping (recent DDNet clients). Maps without a switch layer are served with an empty one added, since doors need it.
-- A personal blue flag is placed a set number of path tiles ahead (100 by default). A particle trail shows the shortest path to it.
+- A personal blue flag is placed a set number of path tiles ahead (100 by default). A particle trail shows the shortest path to it, `/trail` hides it.
 - Reach the flag to capture it. The capture message shows how many fails it took, your time when training alone and the [ELO](#elo) you earned, then you get a new spot.
 - The race timer restarts with every attempt, so it always shows the time of your current try.
 - Kill for a new spot, or `/r` to retry the same spot and flag. Every retry counts as a fail.
@@ -23,14 +23,15 @@ A server-side [DDNet](https://github.com/ddnet/ddnet) mod for training Gores map
 | `/nodj` | Toggle starting attempts without double jump; touching the ground gives it back |
 | `/forwards` | Toggle goals that only lead towards the finish line, see [below](#forwards) |
 | `/scorelimit <0-1000>` | Points needed to win a fight (default 10, `0` for no limit) |
-| `/shotgun`, `/grenade`, `/laser`, `/ninja` | Toggle keeping that weapon in every attempt; ninja never runs out |
+| `/shotgun`, `/grenade`, `/laser` (or `/rifle`), `/ninja` | Toggle keeping that weapon in every attempt; ninja never runs out |
 | `/freeplay` | Toggle training without flags, paths and captures |
+| `/trail` | Toggle showing the particle trail to the flag; it is your own choice, also in fights and while spectating |
 | `/settings [player]` | Show your settings or another player's; in a fight, the leader's settings that apply to it |
 | `/points`, `/elo [player]` | Show your ELO and rank, or another player's |
-| `/top5`, `/top5points`, `/top5elo [rank]` | Show five players of the ELO ladder, starting at the rank (1 by default) |
+| `/top5`, `/top`, `/top5points`, `/top5elo [rank]` | Show five players of the ELO ladder, starting at the rank (1 by default) |
 | `/rank`, `/profile [player]` | Show your [stats](#stats) and playtime, or another player's |
 | `/top5captures`, `/top5attempts`, `/top5respawns`, `/top5playtime [rank]` | Show five players of these ladders |
-| `/help` | List these commands |
+| `/help` | List these commands, plus `/map`, `/mapinfo` and `/cmdlist` |
 
 `/distance` and `/scorelimit` show the current value without an argument. In a fight, only the leader can change these settings, and they apply to the whole group. Leaving a fight keeps its settings, and joining one adopts its settings, including removing weapons it has disabled.
 

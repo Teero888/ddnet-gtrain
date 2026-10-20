@@ -84,6 +84,8 @@ class CGameControllerGTrain : public CGameControllerDDNet
 	bool m_aFightRestart[MAX_CLIENTS] = {};
 	int m_aFightWins[MAX_CLIENTS] = {};
 	CSettings m_aSettings[MAX_CLIENTS];
+	// Every viewer chooses this for themselves, also in fights.
+	bool m_aHideTrail[MAX_CLIENTS] = {};
 	bool m_SyncFightDeaths = false;
 	// switch number of the hover doors, -1 without door collision
 	int m_DoorSwitch = -1;
@@ -169,6 +171,7 @@ public:
 	void Distance(int ClientId, std::optional<int> Tiles);
 	void NoDoubleJump(int ClientId);
 	void Forwards(int ClientId);
+	void Trail(int ClientId);
 	void ScoreLimit(int ClientId, std::optional<int> Limit);
 	void ToggleWeapon(int ClientId, int Weapon);
 	// The settings of the player's group, pName empty for the player itself.

@@ -99,7 +99,7 @@ bool CGameControllerGTrain::AddSwitchLayer(IStorage *pStorage, const char *pPath
 // practice, and only clutter the chat's command completion.
 static const char *const s_apChatCommands[] = {
 	"help", "cmdlist", "info", "rules", "list",
-	"r", "retry", "fight", "distance", "nodj", "forwards", "scorelimit", "freeplay", "settings",
+	"r", "retry", "fight", "distance", "nodj", "forwards", "trail", "scorelimit", "freeplay", "settings",
 	// practice binds, they retry
 	"invincible", "tc", "telecursor", "rescue", "back", "tp", "teleport", "lasttp",
 	"shotgun", "grenade", "laser", "rifle", "ninja",
@@ -987,6 +987,15 @@ void CGameControllerGTrain::Forwards(int ClientId)
 	SendFightChat(ClientId, Forwards ? "New goals only lead towards the finish line." : "New goals lead in any direction again.");
 }
 
+void CGameControllerGTrain::Trail(int ClientId)
+{
+	if(!GameServer()->m_apPlayers[ClientId])
+		return;
+	bool &HideTrail = m_aHideTrail[ClientId];
+	HideTrail = !HideTrail;
+	GameServer()->SendChatTarget(ClientId, HideTrail ? "The trail to the flag is hidden." : "The trail to the flag is shown again.");
+}
+
 void CGameControllerGTrain::ScoreLimit(int ClientId, std::optional<int> Limit)
 {
 	if(!GameServer()->m_apPlayers[ClientId])
@@ -1063,14 +1072,14 @@ void CGameControllerGTrain::ShowSettings(int ClientId, const char *pName)
 		str_copy(aWhose, "Your settings");
 	else
 		str_format(aWhose, sizeof(aWhose), "Settings of '%s'", Server()->ClientName(Target));
+	// The trail is the player's own, the rest comes from the leader.
+	char aFromLeader[64] = "";
 	if(FightSize(Group) > 1)
 	{
-		char aLeader[64];
 		if(Group == Target)
-			str_copy(aLeader, " (fight leader)");
+			str_append(aWhose, " (fight leader)");
 		else
-			str_format(aLeader, sizeof(aLeader), " (from fight leader '%s')", Server()->ClientName(Group));
-		str_append(aWhose, aLeader);
+			str_format(aFromLeader, sizeof(aFromLeader), "from fight leader '%s': ", Server()->ClientName(Group));
 	}
 	char aWeapons[64] = "";
 	for(int Weapon = WEAPON_SHOTGUN; Weapon <= WEAPON_NINJA; ++Weapon)
@@ -1085,8 +1094,8 @@ void CGameControllerGTrain::ShowSettings(int ClientId, const char *pName)
 	if(Settings.m_ScoreLimit > 0)
 		str_format(aScoreLimit, sizeof(aScoreLimit), "%d", Settings.m_ScoreLimit);
 	char aMessage[256];
-	str_format(aMessage, sizeof(aMessage), "%s: /distance %d%s, /nodj %s, /forwards %s, /freeplay %s, /scorelimit %s, kept weapons: %s",
-		aWhose, GoalDistance(Group), Settings.m_GoalDistance ? "" : " (server default)", Settings.m_NoDoubleJump ? "on" : "off",
+	str_format(aMessage, sizeof(aMessage), "%s: /trail %s, %s/distance %d%s, /nodj %s, /forwards %s, /freeplay %s, /scorelimit %s, kept weapons: %s",
+		aWhose, m_aHideTrail[Target] ? "off" : "on", aFromLeader, GoalDistance(Group), Settings.m_GoalDistance ? "" : " (server default)", Settings.m_NoDoubleJump ? "on" : "off",
 		Settings.m_Forwards ? "on" : "off", Settings.m_Freeplay ? "on" : "off", aScoreLimit, aWeapons[0] ? aWeapons : "none");
 	GameServer()->SendChatTarget(ClientId, aMessage);
 }
@@ -1096,17 +1105,20 @@ void CGameControllerGTrain::Help()
 	log_info("chatresp", "GTrain commands:");
 	log_info("chatresp", "Kill: new position and flag");
 	log_info("chatresp", "/r or /retry: retry the current position and flag");
+	log_info("chatresp", "/tc, /telecursor, /tp, /teleport, /lasttp, /back, /rescue, /invincible: retry like /r, for practice binds");
 	log_info("chatresp", "/fight <player>: join a player's fight, /fight alone leaves it");
 	log_info("chatresp", "/distance <%d-%d>: goal distance in tiles, 0 for the server default", (int)MIN_GOAL_DISTANCE, (int)MAX_GOAL_DISTANCE);
 	log_info("chatresp", "/nodj: toggle starting attempts without double jump");
 	log_info("chatresp", "/forwards: toggle goals only leading towards the finish line");
 	log_info("chatresp", "/scorelimit <0-%d>: points to win a fight, 0 for no limit", (int)MAX_SCORE_LIMIT);
-	log_info("chatresp", "/shotgun, /grenade, /laser, /ninja: toggle keeping that weapon");
+	log_info("chatresp", "/shotgun, /grenade, /laser or /rifle, /ninja: toggle keeping that weapon");
 	log_info("chatresp", "/freeplay: toggle training without flags and paths");
+	log_info("chatresp", "/trail: toggle showing the trail to the flag, just for you");
 	log_info("chatresp", "/settings [player]: show your settings, or another player's");
 	log_info("chatresp", "In a fight, only the leader (*name*) changes these settings.");
-	log_info("chatresp", "/points or /elo [player]: show ELO, /top5points or /top5elo: the ELO ladder");
+	log_info("chatresp", "/points or /elo [player]: show ELO, /top5, /top, /top5points or /top5elo: the ELO ladder");
 	log_info("chatresp", "/rank or /profile [player]: stats and playtime, /top5captures, /top5attempts, /top5respawns, /top5playtime: their ladders");
+	log_info("chatresp", "/map <name>: vote a map, /mapinfo: map details, /cmdlist: every chat command");
 	if(m_EloStep)
 		log_info("chatresp", "Captures here are worth %.1f times as much as on Easy ★☆☆ maps (%s %s), longer and faster ones more.", GTrainElo::PointsPerTile(*m_EloStep) / GTrainElo::PointsPerTile(0),
 			s_apEloDifficulties[*m_EloStep / std::size(s_apEloStars)], s_apEloStars[*m_EloStep % std::size(s_apEloStars)]);
@@ -1304,6 +1316,7 @@ void CGameControllerGTrain::OnPlayerDisconnect(CPlayer *pPlayer, const char *pRe
 	m_aAttempts[ClientId] = CAttempt();
 	m_aFightWins[ClientId] = 0;
 	m_aSettings[ClientId] = CSettings();
+	m_aHideTrail[ClientId] = false;
 	m_aStats[ClientId] = CGTrainStats();
 	m_apStatsResults[ClientId] = nullptr;
 	m_aaStatsNames[ClientId][0] = '\0';
@@ -1352,7 +1365,8 @@ void CGameControllerGTrain::Snap(int SnappingClient)
 	Flag.m_Team = TEAM_BLUE;
 	Server()->SnapNewItem(*m_FlagSnapId, Flag);
 
-	if(Attempt.m_RouteNode < 0 || Attempt.m_vRoute.empty())
+	// The viewer's choice, also when watching someone else.
+	if(m_aHideTrail[SnappingClient] || Attempt.m_RouteNode < 0 || Attempt.m_vRoute.empty())
 		return;
 	int NumParticles = 0;
 	const float ClearRadius = g_Config.m_SvGtrainPathClearRadius;

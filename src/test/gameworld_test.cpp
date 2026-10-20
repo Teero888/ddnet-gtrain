@@ -36,6 +36,8 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <limits>
 #include <memory>
@@ -925,6 +927,38 @@ TEST_F(GameWorld, GTrainParticleSpacingAccumulatesAcrossTiles)
 	EXPECT_EQ(vUneven.back(), Goal);
 	g_Config.m_SvGtrainPathParticleSpacing = 4096;
 	EXPECT_EQ(Particles(), (std::vector<vec2>{Goal}));
+}
+
+TEST_F(GameWorld, GTrainTrailIsEachViewersChoice)
+{
+	PrepareTrainingCorridor();
+	g_Config.m_SvGtrainGoalDistance = 12;
+	const auto vIds = SpawnTrainingPlayers({"Runner", "Viewer"});
+	const int Runner = vIds[0], Viewer = vIds[1];
+	for(const int ClientId : vIds)
+		GameServer()->m_apPlayers[ClientId]->m_ShowAll = true;
+	const auto Command = [&](int ClientId, const char *pCommand) {
+		m_pServer->m_avChatMessages[ClientId].clear();
+		m_pServer->Console()->ExecuteLineFlag(pCommand, CFGFLAG_CHAT, ClientId);
+		return m_pServer->m_avChatMessages[ClientId].empty() ? std::string() : m_pServer->m_avChatMessages[ClientId].back();
+	};
+
+	// Hiding the trail keeps the flag.
+	EXPECT_GT(TrainingMarkers(Runner), 1);
+	EXPECT_EQ(Command(Runner, "trail"), "The trail to the flag is hidden.");
+	EXPECT_EQ(TrainingMarkers(Runner), 1);
+	EXPECT_GT(TrainingMarkers(Viewer), 1);
+
+	// The viewer's choice also applies while watching someone else.
+	GameServer()->m_apPlayers[Viewer]->SetTeam(TEAM_SPECTATORS, false);
+	GameServer()->m_apPlayers[Viewer]->SetSpectatorId(Runner);
+	EXPECT_EQ(TrainingGoal(Viewer), TrainingGoal(Runner));
+	EXPECT_GT(TrainingMarkers(Viewer), 1);
+	EXPECT_EQ(Command(Viewer, "trail"), "The trail to the flag is hidden.");
+	EXPECT_EQ(TrainingMarkers(Viewer), 1);
+
+	EXPECT_EQ(Command(Runner, "trail"), "The trail to the flag is shown again.");
+	EXPECT_GT(TrainingMarkers(Runner), 1);
 }
 
 TEST_F(GameWorld, GTrainFreeplayHidesGoalsAndDisablesCaptures)
@@ -2420,7 +2454,7 @@ TEST_F(GameWorld, GTrainChatOnlyHasGTrainCommands)
 	// Races, teams and practice have no use in GTrain.
 	for(const char *pName : {"team", "practice", "save", "load", "kill", "times", "swap", "solo", "weapons", "unlaser", "tpxy"})
 		EXPECT_FALSE(IsChatCommand(pName)) << pName;
-	for(const char *pName : {"r", "retry", "fight", "distance", "forwards", "settings", "laser", "rifle", "top5", "rank", "profile", "top5playtime", "spec", "pause", "w", "help", "cmdlist", "map", "timeout"})
+	for(const char *pName : {"r", "retry", "fight", "distance", "forwards", "trail", "settings", "laser", "rifle", "top5", "rank", "profile", "top5playtime", "spec", "pause", "w", "help", "cmdlist", "map", "timeout"})
 		EXPECT_TRUE(IsChatCommand(pName)) << pName;
 	// Practice binds stay, they retry.
 	for(const char *pName : {"invincible", "tc", "telecursor", "rescue", "back", "tp", "teleport", "lasttp"})
@@ -2442,21 +2476,21 @@ TEST_F(GameWorld, GTrainSettingsShowsThoseOfPlayersAndFights)
 		return m_pServer->m_avChatMessages[ClientId].empty() ? std::string() : m_pServer->m_avChatMessages[ClientId].back();
 	};
 
-	EXPECT_EQ(Settings(Anna, "/settings"), "Your settings: /distance 3 (server default), /nodj off, /forwards off, /freeplay off, /scorelimit 10, kept weapons: none");
-	for(const char *pCommand : {"/distance 120", "/nodj", "/forwards", "/ninja", "/shotgun", "/scorelimit 0"})
+	EXPECT_EQ(Settings(Anna, "/settings"), "Your settings: /trail on, /distance 3 (server default), /nodj off, /forwards off, /freeplay off, /scorelimit 10, kept weapons: none");
+	for(const char *pCommand : {"/distance 120", "/nodj", "/forwards", "/ninja", "/shotgun", "/scorelimit 0", "/trail"})
 		Say(Anna, pCommand);
 	const std::string AnnaSettings = "/distance 120, /nodj on, /forwards on, /freeplay off, /scorelimit off, kept weapons: shotgun, ninja";
-	EXPECT_EQ(Settings(Anna, "/settings"), "Your settings: " + AnnaSettings);
-	EXPECT_EQ(Settings(Runner, "/settings Anna"), "Settings of 'Anna': " + AnnaSettings);
+	EXPECT_EQ(Settings(Anna, "/settings"), "Your settings: /trail off, " + AnnaSettings);
+	EXPECT_EQ(Settings(Runner, "/settings Anna"), "Settings of 'Anna': /trail off, " + AnnaSettings);
 	EXPECT_EQ(Settings(Runner, "/settings Nobody"), "Player not found. Use their full name.");
 
-	// In a fight, the leader's settings apply to everyone.
+	// In a fight, the leader's settings apply to everyone, except the trail.
 	pController->Fight(Bob, "Anna");
 	pController->Tick();
-	EXPECT_EQ(Settings(Bob, "/settings"), "Your settings (from fight leader 'Anna'): " + AnnaSettings);
-	EXPECT_EQ(Settings(Runner, "/settings Bob"), "Settings of 'Bob' (from fight leader 'Anna'): " + AnnaSettings);
-	EXPECT_EQ(Settings(Runner, "/settings *Anna*"), "Settings of 'Anna' (fight leader): " + AnnaSettings);
-	EXPECT_EQ(Settings(Anna, "/settings"), "Your settings (fight leader): " + AnnaSettings);
+	EXPECT_EQ(Settings(Bob, "/settings"), "Your settings: /trail on, from fight leader 'Anna': " + AnnaSettings);
+	EXPECT_EQ(Settings(Runner, "/settings Bob"), "Settings of 'Bob': /trail on, from fight leader 'Anna': " + AnnaSettings);
+	EXPECT_EQ(Settings(Runner, "/settings *Anna*"), "Settings of 'Anna' (fight leader): /trail off, " + AnnaSettings);
+	EXPECT_EQ(Settings(Anna, "/settings"), "Your settings (fight leader): /trail off, " + AnnaSettings);
 }
 
 TEST_F(GameWorld, GTrainPracticeBindsRetry)
@@ -2820,16 +2854,29 @@ TEST_F(GameWorld, GTrainHelpListsOnlyGTrainCommands)
 	m_pServer->m_avChatMessages[Runner].clear();
 	Say(Runner, "/help");
 	const auto &vMessages = m_pServer->m_avChatMessages[Runner];
-	ASSERT_EQ(vMessages.size(), 15);
+	ASSERT_EQ(vMessages.size(), 18);
 	EXPECT_EQ(vMessages.front(), "GTrain commands:");
 	EXPECT_EQ(vMessages.back(), "Captures on this map earn no ELO.");
 	std::string Help;
 	for(const auto &Message : vMessages)
 		Help += Message + "\n";
-	for(const char *pCommand : {"Kill:", "/r ", "/retry", "/fight", "/distance", "/nodj", "/forwards", "/scorelimit", "/shotgun", "/grenade", "/laser", "/ninja", "/freeplay", "/settings", "/points", "/elo", "/top5points", "/top5elo", "/rank", "/profile", "/top5captures", "/top5attempts", "/top5respawns", "/top5playtime"})
-		EXPECT_NE(Help.find(pCommand), std::string::npos) << pCommand;
-	for(const char *pOther : {"/cmdlist", "/practice", "/team", "/rescue"})
-		EXPECT_EQ(Help.find(pOther), std::string::npos) << pOther;
+	const auto Lists = [&](const std::string &Command) {
+		for(size_t Pos = Help.find(Command); Pos != std::string::npos; Pos = Help.find(Command, Pos + 1))
+			if(Pos + Command.size() == Help.size() || !std::isalnum((unsigned char)Help[Pos + Command.size()]))
+				return true;
+		return false;
+	};
+	EXPECT_TRUE(Lists("Kill:"));
+	// Every chat command is listed, except DDNet's general ones.
+	const std::vector<std::string> vGeneral = {"help", "info", "rules", "list", "timeout", "timer", "pause", "spec", "specteam", "pausevoted", "specvoted",
+		"showothers", "showall", "ninjajetpack", "w", "whisper", "c", "converse", "whispers", "dnd", "emote", "eyeemote"};
+	IConsole *pConsole = GameServer()->Console();
+	for(const IConsole::ICommandInfo *pCmd = pConsole->FirstCommandInfo(IConsole::CLIENT_ID_UNSPECIFIED, CFGFLAG_CHAT); pCmd;
+		pCmd = pConsole->NextCommandInfo(pCmd, IConsole::CLIENT_ID_UNSPECIFIED, CFGFLAG_CHAT))
+		if(std::find(vGeneral.begin(), vGeneral.end(), pCmd->Name()) == vGeneral.end())
+			EXPECT_TRUE(Lists(std::string("/") + pCmd->Name())) << pCmd->Name();
+	for(const char *pOther : {"/practice", "/team", "/save"})
+		EXPECT_FALSE(Lists(pOther)) << pOther;
 
 	// Help for a single command still shows its usage.
 	m_pServer->m_avChatMessages[Runner].clear();

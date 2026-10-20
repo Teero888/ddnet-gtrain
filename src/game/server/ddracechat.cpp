@@ -1222,6 +1222,20 @@ void CGameContext::ConForwards(IConsole::IResult *pResult, void *pUserData)
 	pController->Forwards(pResult->m_ClientId);
 }
 
+void CGameContext::ConTrail(IConsole::IResult *pResult, void *pUserData)
+{
+	CGameContext *pSelf = (CGameContext *)pUserData;
+	if(!CheckClientId(pResult->m_ClientId) || !pSelf->m_apPlayers[pResult->m_ClientId])
+		return;
+	auto *pController = dynamic_cast<CGameControllerGTrain *>(pSelf->m_pController);
+	if(!pController)
+	{
+		pSelf->SendChatTarget(pResult->m_ClientId, "/trail is only available in GTrain.");
+		return;
+	}
+	pController->Trail(pResult->m_ClientId);
+}
+
 void CGameContext::ConScoreLimit(IConsole::IResult *pResult, void *pUserData)
 {
 	CGameContext *pSelf = (CGameContext *)pUserData;

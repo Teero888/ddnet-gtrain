@@ -552,6 +552,7 @@ private:
 	static void ConGoalDistance(IConsole::IResult *pResult, void *pUserData);
 	static void ConNoDoubleJump(IConsole::IResult *pResult, void *pUserData);
 	static void ConForwards(IConsole::IResult *pResult, void *pUserData);
+	static void ConTrail(IConsole::IResult *pResult, void *pUserData);
 	static void ConScoreLimit(IConsole::IResult *pResult, void *pUserData);
 	static void ConTeam0Mode(IConsole::IResult *pResult, void *pUserData);
 	static void ConWhisper(IConsole::IResult *pResult, void *pUserData);

@@ -4119,6 +4119,7 @@ void CGameContext::RegisterChatCommands()
 	Console()->Register("distance", "?i[tiles]", CFGFLAG_CHAT | CFGFLAG_SERVER, ConGoalDistance, this, "Show or set the GTrain goal distance, 50-500 tiles or 0 for the server default (fight leader only in a group)");
 	Console()->Register("nodj", "", CFGFLAG_CHAT | CFGFLAG_SERVER, ConNoDoubleJump, this, "Toggle starting GTrain attempts without double jump (fight leader only in a group)");
 	Console()->Register("forwards", "", CFGFLAG_CHAT | CFGFLAG_SERVER, ConForwards, this, "Toggle GTrain goals only leading towards the finish line (fight leader only in a group)");
+	Console()->Register("trail", "", CFGFLAG_CHAT | CFGFLAG_SERVER, ConTrail, this, "Toggle showing the GTrain trail to the flag");
 	Console()->Register("scorelimit", "?i[score]", CFGFLAG_CHAT | CFGFLAG_SERVER, ConScoreLimit, this, "Show or set the points to win a GTrain fight, 0 for no limit (fight leader only in a group)");
 	Console()->Register("team0mode", "?i['0'|'1']", CFGFLAG_CHAT | CFGFLAG_SERVER, ConTeam0Mode, this, "Toggle team between team 0 and team mode. This mode will make your team behave like team 0.");
 
