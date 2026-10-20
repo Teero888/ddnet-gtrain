@@ -2454,6 +2454,8 @@ set_src(GAME_SHARED GLOB src/game
   prng.cpp
   prng.h
   race_state.h
+  switch_layer.cpp
+  switch_layer.h
   team_state.h
   teamscore.cpp
   teamscore.h
@@ -3318,6 +3320,7 @@ if(TOOLS)
     demo_extract_chat.cpp
     dilate.cpp
     dummy_map.cpp
+    map_add_switch_layer.cpp
     map_convert_07.cpp
     map_diff.cpp
     map_extract.cpp

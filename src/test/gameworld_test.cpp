@@ -22,6 +22,7 @@
 
 #include <game/layers.h>
 #include <game/mapitems.h>
+#include <game/mapitems_ex.h>
 #include <game/server/entities/character.h>
 #include <game/server/entities/laser.h>
 #include <game/server/gamecontext.h>
@@ -323,6 +324,65 @@ TEST_F(GameWorld, DebugDummiesConnectAndDrop)
 
 	EXPECT_TRUE(m_pServer->ClientIngame(FirstDummy));
 	EXPECT_FALSE(m_pServer->ClientIngame(SecondDummy));
+}
+
+TEST_F(GameWorld, GTrainSwitchLayerKeepsUuidItems)
+{
+	// A map with two UUID item types, written in the order that gives them
+	// colliding type ids when copied naively.
+	ASSERT_TRUE(m_pStorage->CreateFolder("maps", IStorage::TYPE_SAVE));
+	{
+		CDataFileWriter Writer;
+		ASSERT_TRUE(Writer.Open(m_pStorage.get(), "maps/uuid_items.map"));
+		CMapItemVersion Version = {};
+		Version.m_Version = 1;
+		Writer.AddItem(MAPITEMTYPE_VERSION, 0, sizeof(Version), &Version);
+		const std::vector<CTile> vTiles(4 * 3, CTile{});
+		CMapItemLayerTilemap Game = {};
+		Game.m_Layer.m_Type = LAYERTYPE_TILES;
+		Game.m_Version = 3;
+		Game.m_Width = 4;
+		Game.m_Height = 3;
+		Game.m_Flags = TILESLAYERFLAG_GAME;
+		Game.m_Image = Game.m_ColorEnv = -1;
+		Game.m_Tele = Game.m_Speedup = Game.m_Front = Game.m_Switch = Game.m_Tune = -1;
+		Game.m_Data = Writer.AddData(vTiles.size() * sizeof(CTile), vTiles.data());
+		Writer.AddItem(MAPITEMTYPE_LAYER, 0, sizeof(Game), &Game);
+		CMapItemGroup Group = {};
+		Group.m_Version = 3;
+		Group.m_NumLayers = 1;
+		Writer.AddItem(MAPITEMTYPE_GROUP, 0, sizeof(Group), &Group);
+		const int aAutomapper[] = {11, 12};
+		const int aBezier[] = {21, 22, 23};
+		Writer.AddItem(MAPITEMTYPE_AUTOMAPPER_CONFIG, 0, sizeof(aAutomapper), aAutomapper);
+		Writer.AddItem(MAPITEMTYPE_ENVPOINTS_BEZIER, 0, sizeof(aBezier), aBezier);
+		Writer.Finish();
+	}
+
+	char aPath[IO_MAX_PATH_LENGTH];
+	ASSERT_TRUE(CGameControllerGTrain::AddSwitchLayer(m_pStorage.get(), "maps/uuid_items.map", aPath, sizeof(aPath)));
+	ASSERT_STRNE(aPath, "");
+	CDataFileReader Reader;
+	ASSERT_TRUE(Reader.Open(m_pStorage.get(), aPath, IStorage::TYPE_ALL));
+	const auto ItemData = [&](int Type) {
+		int Start, Num;
+		Reader.GetType(Type, &Start, &Num);
+		std::vector<int> vData;
+		if(Num == 1)
+		{
+			const int *pData = static_cast<const int *>(Reader.GetItem(Start));
+			vData.assign(pData, pData + Reader.GetItemSize(Start) / sizeof(int));
+		}
+		return vData;
+	};
+	EXPECT_EQ(ItemData(MAPITEMTYPE_AUTOMAPPER_CONFIG), (std::vector<int>{11, 12}));
+	EXPECT_EQ(ItemData(MAPITEMTYPE_ENVPOINTS_BEZIER), (std::vector<int>{21, 22, 23}));
+	// Every type id maps to one UUID.
+	int Start, Num;
+	Reader.GetType(ITEMTYPE_EX, &Start, &Num);
+	EXPECT_EQ(Num, 2);
+	Reader.Close();
+	EXPECT_TRUE(m_pStorage->RemoveFile(aPath, IStorage::TYPE_SAVE));
 }
 
 TEST_F(GameWorld, GTrainAddsSwitchLayerToServedMaps)

@@ -100,6 +100,16 @@ Build the server as described in the [DDNet building guide](docs/BUILDING.md) an
 
 `sv_gametype` defaults to `gtrain`. The mod forces `sv_solo_server 1` and `sv_kill_delay 0`. Chat commands for races, teams and practice, like `/team`, `/practice` or `/save`, are removed from the chat and its command completion; rcon keeps them.
 
+### Map downloads
+
+Hover doors need a switch layer. The server adds an empty one to maps without it when loading them, so those are served as changed copies. To serve map files as they are, for example from an HTTPS map server with `sv_maps_base_url`, add it to the files once:
+
+```sh
+./map_add_switch_layer maps/*.map
+```
+
+The tool changes maps in place and skips maps that have a switch layer already. A map server serves each map as `<map>_<sha256>.map`, and `sv_maps_base_url` is its address ending in `/`. Without one, clients download maps from the game server; keep `sv_map_window` at 25 or below then, since larger windows overflow the connection's resend buffer and can stall downloads.
+
 | Setting | Default | Description |
 | --- | --- | --- |
 | `sv_gtrain_goal_distance` | 100 | Goal distance in tiles for players who didn't set `/distance` |
