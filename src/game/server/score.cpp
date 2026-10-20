@@ -281,6 +281,42 @@ void CScore::ShowTopPoints(int ClientId, int Offset)
 	ExecPlayerThread(CScoreWorker::ShowTopPoints, "show top points", ClientId, "", Offset);
 }
 
+void CScore::LoadMapDifficulty(const std::shared_ptr<CScoreMapDifficultyResult> &pResult)
+{
+	auto Tmp = std::make_unique<CSqlMapDifficultyRequest>(pResult);
+	str_copy(Tmp->m_aMap, GameServer()->Map()->BaseName());
+	m_pPool->Execute(CScoreWorker::LoadMapDifficulty, std::move(Tmp), "load map difficulty");
+}
+
+void CScore::LoadElo(int ClientId, const std::shared_ptr<CScoreEloResult> &pResult)
+{
+	auto Tmp = std::make_unique<CSqlEloData>(pResult);
+	str_copy(Tmp->m_aName, Server()->ClientName(ClientId));
+	m_pPool->Execute(CScoreWorker::LoadElo, std::move(Tmp), "load elo");
+}
+
+void CScore::AddElo(int ClientId, int64_t Points)
+{
+	auto Tmp = std::make_unique<CSqlEloData>();
+	str_copy(Tmp->m_aName, Server()->ClientName(ClientId));
+	Tmp->m_Points = Points;
+	m_pPool->ExecuteWrite(CScoreWorker::AddElo, std::move(Tmp), "add elo");
+}
+
+void CScore::ShowElo(int ClientId, const char *pName)
+{
+	if(RateLimitPlayer(ClientId))
+		return;
+	ExecPlayerThread(CScoreWorker::ShowElo, "show elo", ClientId, pName, 0);
+}
+
+void CScore::ShowTopElo(int ClientId, int Offset)
+{
+	if(RateLimitPlayer(ClientId))
+		return;
+	ExecPlayerThread(CScoreWorker::ShowTopElo, "show top elo", ClientId, "", Offset);
+}
+
 void CScore::RandomMap(int ClientId, int MinStars, int MaxStars)
 {
 	auto pResult = std::make_shared<CScoreRandomMapResult>(ClientId);

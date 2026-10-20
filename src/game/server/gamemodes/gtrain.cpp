@@ -5,6 +5,7 @@
 #include <base/secure.h>
 
 #include <engine/shared/config.h>
+#include <engine/shared/console.h>
 #include <engine/shared/datafile.h>
 #include <engine/storage.h>
 
@@ -14,7 +15,9 @@
 #include <game/mapitems.h>
 #include <game/server/entities/character.h>
 #include <game/server/gamecontext.h>
+#include <game/server/gamemodes/gtrain_elo.h>
 #include <game/server/player.h>
+#include <game/server/score.h>
 
 #include <algorithm>
 #include <iterator>
@@ -144,6 +147,69 @@ bool CGameControllerGTrain::AddSwitchLayer(IStorage *pStorage, const char *pPath
 	Writer.Finish();
 	str_copy(pNewPath, aTemp, NewPathSize);
 	return true;
+}
+
+static const char *const s_apEloDifficulties[] = {"Easy", "Main", "Hard", "Insane", "Extreme"};
+static const char *const s_apEloStars[] = {"★☆☆", "★★☆", "★★★"};
+
+std::optional<int> CGameControllerGTrain::EloStep(const char *pServer, int Stars)
+{
+	if(Stars < 1 || Stars > (int)std::size(s_apEloStars))
+		return std::nullopt;
+	for(int Difficulty = 0; Difficulty < (int)std::size(s_apEloDifficulties); ++Difficulty)
+		if(str_comp_nocase(pServer, s_apEloDifficulties[Difficulty]) == 0)
+			return Difficulty * (int)std::size(s_apEloStars) + Stars - 1;
+	return std::nullopt;
+}
+
+void CGameControllerGTrain::LoadMapDifficulty()
+{
+	m_pMapDifficultyResult = std::make_shared<CScoreMapDifficultyResult>();
+	GameServer()->Score()->LoadMapDifficulty(m_pMapDifficultyResult);
+}
+
+void CGameControllerGTrain::SetMapDifficulty(const char *pServer, int Stars)
+{
+	m_EloStep = EloStep(pServer, Stars);
+	if(m_EloStep)
+		log_info("gtrain", "map is %s with %d stars, captures earn %.0f points per goal tile", pServer, Stars, GTrainElo::PointsPerTile(*m_EloStep));
+	else
+		log_info("gtrain", "map is '%s' with %d stars, captures earn no ELO", pServer, Stars);
+}
+
+void CGameControllerGTrain::LoadElo(int ClientId)
+{
+	// Database jobs run in order, so gains awarded from now on are missing
+	// from this result and get added to it.
+	m_aEloPoints[ClientId] = 0;
+	m_apEloResults[ClientId] = std::make_shared<CScoreEloResult>();
+	GameServer()->Score()->LoadElo(ClientId, m_apEloResults[ClientId]);
+}
+
+std::optional<CGameControllerGTrain::CEloGain> CGameControllerGTrain::AwardElo(int ClientId)
+{
+	// The goal's path distance, never more than the chosen goal distance.
+	const CAttempt &Attempt = m_aAttempts[ClientId];
+	const int Distance = Attempt.m_pGoal->m_Distance;
+	if(!m_EloStep || Distance <= 0 || ((CConsole *)GameServer()->Console())->Cheated())
+		return std::nullopt;
+	const double Seconds = (Server()->Tick() - Attempt.m_StartTick) / (double)Server()->TickSpeed();
+	const int64_t Points = GTrainElo::CapturePoints(*m_EloStep, Distance, Seconds);
+	const double EloBefore = GTrainElo::FromPoints(m_aEloPoints[ClientId]);
+	m_aEloPoints[ClientId] += Points;
+	GameServer()->Score()->AddElo(ClientId, Points);
+	return CEloGain{GTrainElo::FromPoints(m_aEloPoints[ClientId]) - EloBefore, GTrainElo::SpeedFactor(*m_EloStep, Distance, Seconds)};
+}
+
+void CGameControllerGTrain::FormatCaptureResult(char *pBuf, int BufSize, int Fails, const std::optional<CEloGain> &Gain)
+{
+	str_format(pBuf, BufSize, "%d fail%s", Fails, Fails == 1 ? "" : "s");
+	if(Gain)
+	{
+		char aElo[64];
+		str_format(aElo, sizeof(aElo), ", +%.2f ELO, %.1fx speed", Gain->m_Elo, Gain->m_SpeedFactor);
+		str_append(pBuf, aElo, BufSize);
+	}
 }
 
 void CGameControllerGTrain::FindTrainPositions()
@@ -329,8 +395,6 @@ void CGameControllerGTrain::FindTrainPositions()
 		m_vTileNodes[Index] = (int)m_PathGraph.m_vNodes.size();
 		m_PathGraph.m_vNodes.push_back({vec2((Index % Width) * 32.0f + 16.0f, (Index / Width) * 32.0f + 16.0f), false});
 	}
-	for(vec2 Pos : m_vTrainPositions)
-		m_PathGraph.m_vNodes[m_vTileNodes[pCollision->GetPureMapIndex(Pos)]].m_Goal = true;
 
 	// Paths cannot pass stoppers against their direction. One-way stoppers
 	// also block moving off them, like CCollision::GetMoveRestrictions.
@@ -359,6 +423,50 @@ void CGameControllerGTrain::FindTrainPositions()
 		CGTrainPathGraph::AddTileEdges(Index, Width, Height, m_vTileNodes, vStoppers, vEdges);
 	}
 	m_PathGraph.InitEdges(vEdges);
+
+	ExcludeStartArea();
+	for(vec2 Pos : m_vTrainPositions)
+		m_PathGraph.m_vNodes[PathNode(Pos)].m_Goal = true;
+}
+
+void CGameControllerGTrain::ExcludeStartArea()
+{
+	// Map starts are usually easy. No spawn or goal is placed within the
+	// configured path distance of the start line, measured like goals.
+	const int Distance = g_Config.m_SvGtrainStartExclusion;
+	if(Distance <= 0 || m_vTrainPositions.empty())
+		return;
+	CCollision *pCollision = GameServer()->Collision();
+	const int Width = pCollision->GetWidth();
+	const int Height = pCollision->GetHeight();
+	std::vector<int> vBesideStart;
+	for(int Index = 0; Index < Width * Height; ++Index)
+	{
+		if(pCollision->GetTileIndex(Index) != TILE_START && pCollision->GetFrontTileIndex(Index) != TILE_START)
+			continue;
+		const int Column = Index % Width;
+		const int Row = Index / Width;
+		for(const int Neighbor : {Column > 0 ? Index - 1 : -1, Column < Width - 1 ? Index + 1 : -1, Row > 0 ? Index - Width : -1, Row < Height - 1 ? Index + Width : -1})
+			if(Neighbor >= 0 && m_vTileNodes[Neighbor] >= 0)
+				vBesideStart.push_back(m_vTileNodes[Neighbor]);
+	}
+	// Tiles beside the start line are already one tile away from it.
+	std::vector<int> vNearStart;
+	m_Pathfinder.FindReachable(vBesideStart, Distance - 1, vNearStart);
+	std::vector<bool> vExcluded(m_PathGraph.m_vNodes.size(), false);
+	for(const int Node : vNearStart)
+		vExcluded[Node] = true;
+	std::vector<vec2> vRemaining;
+	for(vec2 Pos : m_vTrainPositions)
+		if(!vExcluded[PathNode(Pos)])
+			vRemaining.push_back(Pos);
+	if(vRemaining.empty())
+	{
+		log_warn("gtrain", "all tiles are within %d tiles of the start line, keeping them", Distance);
+		return;
+	}
+	log_info("gtrain", "skipped %d tiles within %d tiles of the start line", (int)(m_vTrainPositions.size() - vRemaining.size()), Distance);
+	m_vTrainPositions = std::move(vRemaining);
 }
 
 void CGameControllerGTrain::PlaceRandomly(CCharacter *pChr)
@@ -513,8 +621,11 @@ void CGameControllerGTrain::KeepWeapons(CCharacter *pChr)
 
 int CGameControllerGTrain::SnapPlayerScore(int SnappingClient, CPlayer *pPlayer)
 {
+	// Fighting players show their fight points, everyone else their ELO.
 	const int ClientId = pPlayer->GetCid();
-	return pPlayer->GetTeam() != TEAM_SPECTATORS && m_aFightTeam[m_aFightGroup[ClientId]] != 0 ? m_aFightWins[ClientId] : 0;
+	if(pPlayer->GetTeam() != TEAM_SPECTATORS && m_aFightTeam[m_aFightGroup[ClientId]] != 0)
+		return m_aFightWins[ClientId];
+	return (int)GTrainElo::FromPoints(m_aEloPoints[ClientId]);
 }
 
 void CGameControllerGTrain::UpdateFightTeams()
@@ -864,6 +975,12 @@ void CGameControllerGTrain::Help()
 	log_info("chatresp", "/shotgun, /grenade, /laser, /ninja: toggle keeping that weapon");
 	log_info("chatresp", "/freeplay: toggle training without flags and paths");
 	log_info("chatresp", "In a fight, only the leader (*name*) changes these settings.");
+	log_info("chatresp", "/points or /elo [player]: show ELO, /top5points or /top5elo: the ELO ladder");
+	if(m_EloStep)
+		log_info("chatresp", "Captures here earn %.0f points per goal tile (%s %s), half to twice that by speed.", GTrainElo::PointsPerTile(*m_EloStep),
+			s_apEloDifficulties[*m_EloStep / std::size(s_apEloStars)], s_apEloStars[*m_EloStep % std::size(s_apEloStars)]);
+	else
+		log_info("chatresp", "Captures on this map earn no ELO.");
 }
 
 std::optional<int> CGameControllerGTrain::RaceTimerStartTick(CCharacter *pChr)
@@ -936,18 +1053,19 @@ void CGameControllerGTrain::UpdatePath(CCharacter *pChr)
 	Attempt.m_RouteNode = Node;
 }
 
-void CGameControllerGTrain::AnnounceFightScore(int Winner)
+void CGameControllerGTrain::AnnounceFightScore(int Winner, const std::optional<CEloGain> &Gain)
 {
 	const int Group = m_aFightGroup[Winner];
 	const int ScoreLimit = m_aSettings[Group].m_ScoreLimit;
-	const int Fails = m_aAttempts[Winner].m_Fails;
 	++m_aFightWins[Winner];
 	Server()->SetClientScore(Winner, SnapPlayerScore(Winner, GameServer()->m_apPlayers[Winner]));
 	char aScore[64] = "Fight score:";
 	if(ScoreLimit > 0)
 		str_format(aScore, sizeof(aScore), "Fight score (first to %d):", ScoreLimit);
+	char aResult[64];
+	FormatCaptureResult(aResult, sizeof(aResult), m_aAttempts[Winner].m_Fails, Gain);
 	char aMessage[MAX_CHAT_LENGTH];
-	str_format(aMessage, sizeof(aMessage), "'%s' captured the flag (%d fail%s). %s", Server()->ClientName(Winner), Fails, Fails == 1 ? "" : "s", aScore);
+	str_format(aMessage, sizeof(aMessage), "'%s' captured the flag (%s). %s", Server()->ClientName(Winner), aResult, aScore);
 	bool First = true;
 	// Leader first, then the remaining members. Split long standings into
 	// complete chat messages rather than truncating names or scores.
@@ -1000,16 +1118,19 @@ void CGameControllerGTrain::CheckGoal(CCharacter *pChr)
 	if(dot(GoalOffset, GoalOffset) < 42.0f * 42.0f)
 	{
 		const int Group = m_aFightGroup[ClientId];
+		const std::optional<CEloGain> Gain = AwardElo(ClientId);
 		if(FightSize(Group) > 1)
 		{
-			AnnounceFightScore(ClientId);
+			AnnounceFightScore(ClientId, Gain);
 			RestartFight(Group);
 		}
 		else
 		{
+			char aResult[64];
+			FormatCaptureResult(aResult, sizeof(aResult), Attempt.m_Fails, Gain);
 			char aMessage[256];
 			const double Seconds = (Server()->Tick() - Attempt.m_StartTick) / (double)Server()->TickSpeed();
-			str_format(aMessage, sizeof(aMessage), "'%s' captured the flag in %.2f seconds (%d fail%s).", Server()->ClientName(ClientId), Seconds, Attempt.m_Fails, Attempt.m_Fails == 1 ? "" : "s");
+			str_format(aMessage, sizeof(aMessage), "'%s' captured the flag in %.2f seconds (%s).", Server()->ClientName(ClientId), Seconds, aResult);
 			GameServer()->SendChat(-1, TEAM_ALL, aMessage);
 			PlaceRandomly(pChr);
 		}
@@ -1034,12 +1155,15 @@ void CGameControllerGTrain::OnPlayerDisconnect(CPlayer *pPlayer, const char *pRe
 	m_aAttempts[ClientId] = CAttempt();
 	m_aFightWins[ClientId] = 0;
 	m_aSettings[ClientId] = CSettings();
+	m_aEloPoints[ClientId] = 0;
+	m_apEloResults[ClientId] = nullptr;
 	CGameControllerDDNet::OnPlayerDisconnect(pPlayer, pReason);
 }
 
 void CGameControllerGTrain::OnPlayerConnect(CPlayer *pPlayer)
 {
 	CGameControllerDDNet::OnPlayerConnect(pPlayer);
+	LoadElo(pPlayer->GetCid());
 	UpdateFightTeams();
 }
 
@@ -1173,6 +1297,27 @@ void CGameControllerGTrain::Snap(int SnappingClient)
 void CGameControllerGTrain::Tick()
 {
 	CGameControllerDDNet::Tick();
+
+	if(m_pMapDifficultyResult && m_pMapDifficultyResult->m_Completed)
+	{
+		if(m_pMapDifficultyResult->m_Success)
+			SetMapDifficulty(m_pMapDifficultyResult->m_aServer, m_pMapDifficultyResult->m_Stars);
+		m_pMapDifficultyResult = nullptr;
+	}
+	for(int ClientId = 0; ClientId < MAX_CLIENTS; ++ClientId)
+	{
+		auto &pEloResult = m_apEloResults[ClientId];
+		if(pEloResult && pEloResult->m_Completed)
+		{
+			if(pEloResult->m_Success)
+				m_aEloPoints[ClientId] += pEloResult->m_Points;
+			pEloResult = nullptr;
+		}
+		// The server browser shows the same scores. Loading race times after a
+		// name change would replace them otherwise.
+		if(CPlayer *pPlayer = GameServer()->m_apPlayers[ClientId])
+			Server()->SetClientScore(ClientId, SnapPlayerScore(ClientId, pPlayer));
+	}
 
 	// killing is how players choose a new position, never delay it
 	g_Config.m_SvKillDelay = 0;

@@ -2,6 +2,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <queue>
 
 namespace
@@ -307,4 +308,28 @@ TEST(GTrainPath, StoppersBlockRoutesAgainstTheirDirection)
 	std::vector<int> vRoute;
 	ASSERT_TRUE(Finder.FindPath(Goal, 0, vRoute));
 	EXPECT_EQ(vRoute, (std::vector<int>{0, 2, 3}));
+}
+
+TEST(GTrainPath, ReachableNodesWithinDepth)
+{
+	// Sources count as distance zero, duplicates and invalid sources are skipped.
+	const auto Graph = Grid(8, 1);
+	CGTrainPathfinder Finder(Graph);
+	std::vector<int> vReachable;
+	Finder.FindReachable({0, 0, -1, 100}, 2, vReachable);
+	EXPECT_EQ(vReachable, (std::vector<int>{0, 1, 2}));
+	Finder.FindReachable({2, 6}, 1, vReachable);
+	std::sort(vReachable.begin(), vReachable.end());
+	EXPECT_EQ(vReachable, (std::vector<int>{1, 2, 3, 5, 6, 7}));
+	Finder.FindReachable({3}, 0, vReachable);
+	EXPECT_EQ(vReachable, (std::vector<int>{3}));
+
+	// Distances follow directed edges, teleports count as one step.
+	CGTrainPathGraph Teleport;
+	for(int i = 0; i < 4; ++i)
+		Teleport.m_vNodes.push_back({vec2(i * 320, 16), true});
+	Teleport.InitEdges({{0, {3, 0}}, {3, {2, 1}}, {1, {0, 2}}});
+	CGTrainPathfinder TeleportFinder(Teleport);
+	TeleportFinder.FindReachable({0}, 2, vReachable);
+	EXPECT_EQ(vReachable, (std::vector<int>{0, 3, 2}));
 }

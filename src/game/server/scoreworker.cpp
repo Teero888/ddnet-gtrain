@@ -11,6 +11,9 @@
 #include <engine/server/sql_string_helpers.h>
 #include <engine/shared/config.h>
 
+#include <game/server/gamemodes/gtrain_elo.h>
+
+#include <cinttypes>
 #include <cmath>
 
 // "6b407e81-8b77-3e04-a207-8da17f37d000"
@@ -1586,6 +1589,188 @@ bool CScoreWorker::ShowTopPoints(IDbConnection *pSqlServer, const ISqlData *pGam
 	str_copy(paMessages[Line], "-------------------------------");
 
 	return true;
+}
+
+bool CScoreWorker::LoadMapDifficulty(IDbConnection *pSqlServer, const ISqlData *pGameData, char *pError, int ErrorSize)
+{
+	const auto *pData = dynamic_cast<const CSqlMapDifficultyRequest *>(pGameData);
+	auto *pResult = dynamic_cast<CScoreMapDifficultyResult *>(pGameData->m_pResult.get());
+
+	char aBuf[256];
+	str_format(aBuf, sizeof(aBuf), "SELECT Server, Stars FROM %s_maps WHERE Map = ?", pSqlServer->GetPrefix());
+	if(!pSqlServer->PrepareStatement(aBuf, pError, ErrorSize))
+	{
+		return false;
+	}
+	pSqlServer->BindString(1, pData->m_aMap);
+
+	bool End;
+	if(!pSqlServer->Step(&End, pError, ErrorSize))
+	{
+		return false;
+	}
+	if(!End)
+	{
+		pSqlServer->GetString(1, pResult->m_aServer, sizeof(pResult->m_aServer));
+		pResult->m_Stars = pSqlServer->GetInt(2);
+	}
+	return true;
+}
+
+bool CScoreWorker::LoadElo(IDbConnection *pSqlServer, const ISqlData *pGameData, char *pError, int ErrorSize)
+{
+	const auto *pData = dynamic_cast<const CSqlEloData *>(pGameData);
+	auto *pResult = dynamic_cast<CScoreEloResult *>(pGameData->m_pResult.get());
+
+	char aBuf[256];
+	str_format(aBuf, sizeof(aBuf), "SELECT Points FROM %s_elo WHERE Name = ?", pSqlServer->GetPrefix());
+	if(!pSqlServer->PrepareStatement(aBuf, pError, ErrorSize))
+	{
+		return false;
+	}
+	pSqlServer->BindString(1, pData->m_aName);
+
+	bool End;
+	if(!pSqlServer->Step(&End, pError, ErrorSize))
+	{
+		return false;
+	}
+	if(!End)
+	{
+		pResult->m_Points = pSqlServer->GetInt64(1);
+	}
+	return true;
+}
+
+bool CScoreWorker::ShowElo(IDbConnection *pSqlServer, const ISqlData *pGameData, char *pError, int ErrorSize)
+{
+	const auto *pData = dynamic_cast<const CSqlPlayerRequest *>(pGameData);
+	auto *pResult = dynamic_cast<CScorePlayerResult *>(pGameData->m_pResult.get());
+	auto *paMessages = pResult->m_Data.m_aaMessages;
+
+	char aBuf[512];
+	str_format(aBuf, sizeof(aBuf),
+		"SELECT ("
+		"  SELECT COUNT(Name) + 1 FROM %s_elo WHERE Points > ("
+		"    SELECT Points FROM %s_elo WHERE Name = ?"
+		")) as Ranking, Points, Name "
+		"FROM %s_elo WHERE Name = ?",
+		pSqlServer->GetPrefix(), pSqlServer->GetPrefix(), pSqlServer->GetPrefix());
+	if(!pSqlServer->PrepareStatement(aBuf, pError, ErrorSize))
+	{
+		return false;
+	}
+	pSqlServer->BindString(1, pData->m_aName);
+	pSqlServer->BindString(2, pData->m_aName);
+
+	bool End;
+	if(!pSqlServer->Step(&End, pError, ErrorSize))
+	{
+		return false;
+	}
+	if(!End)
+	{
+		int Rank = pSqlServer->GetInt(1);
+		int64_t Points = pSqlServer->GetInt64(2);
+		char aName[MAX_NAME_LENGTH];
+		pSqlServer->GetString(3, aName, sizeof(aName));
+		pResult->m_MessageKind = CScorePlayerResult::ALL;
+		str_format(paMessages[0], sizeof(paMessages[0]),
+			"%d. %s ELO: %d (%" PRId64 " points), requested by %s",
+			Rank, aName, (int)GTrainElo::FromPoints(Points), Points, pData->m_aRequestingPlayer);
+	}
+	else
+	{
+		str_format(paMessages[0], sizeof(paMessages[0]),
+			"%s has not gained any ELO so far", pData->m_aName);
+	}
+	return true;
+}
+
+bool CScoreWorker::ShowTopElo(IDbConnection *pSqlServer, const ISqlData *pGameData, char *pError, int ErrorSize)
+{
+	const auto *pData = dynamic_cast<const CSqlPlayerRequest *>(pGameData);
+	auto *pResult = dynamic_cast<CScorePlayerResult *>(pGameData->m_pResult.get());
+	auto *paMessages = pResult->m_Data.m_aaMessages;
+
+	int LimitStart = std::max(pData->m_Offset - 1, 0);
+
+	char aBuf[512];
+	str_format(aBuf, sizeof(aBuf),
+		"SELECT RANK() OVER (ORDER BY a.Points DESC) as Ranking, Points, Name "
+		"FROM ("
+		"  SELECT Points, Name "
+		"  FROM %s_elo "
+		"  ORDER BY Points DESC LIMIT ?"
+		") as a "
+		"ORDER BY Ranking ASC, Name ASC LIMIT ?, 5",
+		pSqlServer->GetPrefix());
+	if(!pSqlServer->PrepareStatement(aBuf, pError, ErrorSize))
+	{
+		return false;
+	}
+	pSqlServer->BindInt(1, LimitStart + 5);
+	pSqlServer->BindInt(2, LimitStart);
+
+	str_copy(paMessages[0], "-------- Top ELO --------");
+
+	bool End = false;
+	int Line = 1;
+	while(pSqlServer->Step(&End, pError, ErrorSize) && !End)
+	{
+		int Rank = pSqlServer->GetInt(1);
+		int64_t Points = pSqlServer->GetInt64(2);
+		char aName[MAX_NAME_LENGTH];
+		pSqlServer->GetString(3, aName, sizeof(aName));
+		str_format(paMessages[Line], sizeof(paMessages[Line]),
+			"%d. %s ELO: %d", Rank, aName, (int)GTrainElo::FromPoints(Points));
+		Line++;
+	}
+	if(!End)
+	{
+		return false;
+	}
+	str_copy(paMessages[Line], "-------------------------------");
+
+	return true;
+}
+
+bool CScoreWorker::AddElo(IDbConnection *pSqlServer, const ISqlData *pGameData, Write w, char *pError, int ErrorSize)
+{
+	const auto *pData = dynamic_cast<const CSqlEloData *>(pGameData);
+
+	// Like DDNet points, ELO points have no backup table and only go to the
+	// main database.
+	if(w != Write::NORMAL)
+	{
+		return true;
+	}
+
+	// Create the row first, so concurrent servers never insert it twice.
+	char aBuf[512];
+	str_format(aBuf, sizeof(aBuf),
+		"%s INTO %s_elo(Name, Points) VALUES (?, 0)",
+		pSqlServer->InsertIgnore(), pSqlServer->GetPrefix());
+	if(!pSqlServer->PrepareStatement(aBuf, pError, ErrorSize))
+	{
+		return false;
+	}
+	pSqlServer->BindString(1, pData->m_aName);
+	int NumInserted;
+	if(!pSqlServer->ExecuteUpdate(&NumInserted, pError, ErrorSize))
+	{
+		return false;
+	}
+
+	str_format(aBuf, sizeof(aBuf), "UPDATE %s_elo SET Points = Points + ? WHERE Name = ?", pSqlServer->GetPrefix());
+	if(!pSqlServer->PrepareStatement(aBuf, pError, ErrorSize))
+	{
+		return false;
+	}
+	pSqlServer->BindInt64(1, pData->m_Points);
+	pSqlServer->BindString(2, pData->m_aName);
+	int NumUpdated;
+	return pSqlServer->ExecuteUpdate(&NumUpdated, pError, ErrorSize);
 }
 
 bool CScoreWorker::RandomMap(IDbConnection *pSqlServer, const ISqlData *pGameData, char *pError, int ErrorSize)

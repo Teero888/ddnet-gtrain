@@ -408,6 +408,7 @@ public:
 
 	CUuid GameUuid() const override;
 	const char *GameType() const override;
+	bool HasTimeScore() const override;
 	char m_aVersionString[32];
 	const char *Version() const override;
 	const char *NetVersion() const override;
@@ -514,6 +515,8 @@ private:
 	static void ConTimes(IConsole::IResult *pResult, void *pUserData);
 	static void ConPoints(IConsole::IResult *pResult, void *pUserData);
 	static void ConTopPoints(IConsole::IResult *pResult, void *pUserData);
+	static void ConElo(IConsole::IResult *pResult, void *pUserData);
+	static void ConTopElo(IConsole::IResult *pResult, void *pUserData);
 	static void ConTimeCP(IConsole::IResult *pResult, void *pUserData);
 
 	static void ConDND(IConsole::IResult *pResult, void *pUserData);

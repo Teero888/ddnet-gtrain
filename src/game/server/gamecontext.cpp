@@ -2908,6 +2908,8 @@ void CGameContext::OnChangeInfoNetMessage(const CNetMsg_Cl_ChangeInfo *pMsg, int
 		Score()->PlayerData(ClientId)->Reset();
 		Server()->SetClientScore(ClientId, std::nullopt);
 		Score()->LoadPlayerData(ClientId);
+		if(auto *pController = dynamic_cast<CGameControllerGTrain *>(m_pController))
+			pController->LoadElo(ClientId);
 
 		SixupNeedsUpdate = true;
 
@@ -4091,8 +4093,10 @@ void CGameContext::RegisterChatCommands()
 	Console()->Register("top", "?i[rank to start with]", CFGFLAG_CHAT | CFGFLAG_SERVER, ConTop, this, "Shows the top ranks of the global and regional ladder beginning with rank i (1 by default, -1 for worst)");
 	Console()->Register("top5", "?i[rank to start with]", CFGFLAG_CHAT | CFGFLAG_SERVER, ConTop, this, "Shows the top ranks of the global and regional ladder beginning with rank i (1 by default, -1 for worst)");
 	Console()->Register("times", "?s[player name] ?i[number of times to skip]", CFGFLAG_CHAT | CFGFLAG_SERVER, ConTimes, this, "/times ?s?i shows last 5 times of the server or of a player beginning with name s starting with time i (i = 1 by default, -1 for first)");
-	Console()->Register("points", "?r[player name]", CFGFLAG_CHAT | CFGFLAG_SERVER, ConPoints, this, "Shows the global points of a player beginning with name r (your rank by default)");
-	Console()->Register("top5points", "?i[number]", CFGFLAG_CHAT | CFGFLAG_SERVER, ConTopPoints, this, "Shows five points of the global point ladder beginning with rank i (1 by default)");
+	Console()->Register("points", "?r[player name]", CFGFLAG_CHAT | CFGFLAG_SERVER, ConPoints, this, "Shows the global points of a player beginning with name r (your rank by default), the ELO in GTrain");
+	Console()->Register("top5points", "?i[number]", CFGFLAG_CHAT | CFGFLAG_SERVER, ConTopPoints, this, "Shows five points of the global point ladder beginning with rank i (1 by default), the ELO ladder in GTrain");
+	Console()->Register("elo", "?r[player name]", CFGFLAG_CHAT | CFGFLAG_SERVER, ConElo, this, "Shows the GTrain ELO of a player (yours by default)");
+	Console()->Register("top5elo", "?i[number]", CFGFLAG_CHAT | CFGFLAG_SERVER, ConTopElo, this, "Shows five players of the GTrain ELO ladder beginning with rank i (1 by default)");
 	Console()->Register("timecp", "?r[player name]", CFGFLAG_CHAT | CFGFLAG_SERVER, ConTimeCP, this, "Set your checkpoints based on another player");
 
 	Console()->Register("team", "?i[id]", CFGFLAG_CHAT | CFGFLAG_SERVER, ConTeam, this, "Lets you join team i (shows your team if left blank)");
@@ -4370,6 +4374,8 @@ void CGameContext::OnInit(const void *pPersistentData)
 
 	// load map info from database
 	Score()->LoadMapInfo();
+	if(auto *pController = dynamic_cast<CGameControllerGTrain *>(m_pController))
+		pController->LoadMapDifficulty();
 
 	// create all entities from the game layer
 	CreateAllEntities(true);
@@ -4783,6 +4789,11 @@ const char *CGameContext::GameType() const
 	dbg_assert(m_pController, "no controller");
 	dbg_assert(m_pController->m_pGameType, "no gametype");
 	return m_pController->m_pGameType;
+}
+bool CGameContext::HasTimeScore() const
+{
+	dbg_assert(m_pController, "no controller");
+	return m_pController->HasTimeScore();
 }
 const char *CGameContext::Version() const { return m_aVersionString; }
 const char *CGameContext::NetVersion() const { return GAME_NETVERSION; }

@@ -98,6 +98,7 @@ protected:
 	void FormatCreateMaps(char *aBuf, unsigned int BufferSize) const;
 	void FormatCreateSaves(char *aBuf, unsigned int BufferSize, bool Backup) const;
 	void FormatCreatePoints(char *aBuf, unsigned int BufferSize) const;
+	void FormatCreateElo(char *aBuf, unsigned int BufferSize) const;
 };
 
 bool MysqlAvailable();

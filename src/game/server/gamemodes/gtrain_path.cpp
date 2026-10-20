@@ -164,6 +164,35 @@ bool CGTrainPathfinder::FindPath(const CGTrainGoal &Goal, int Start, std::vector
 	return true;
 }
 
+void CGTrainPathfinder::FindReachable(const std::vector<int> &vSources, int Depth, std::vector<int> &vReachable)
+{
+	vReachable.clear();
+	BeginSearch();
+	for(const int Source : vSources)
+	{
+		if(Source < 0 || Source >= (int)m_Graph.m_vNodes.size() || m_vStates[Source].m_Stamp == m_Stamp)
+			continue;
+		m_vStates[Source] = {m_Stamp, 0};
+		vReachable.push_back(Source);
+	}
+	// The result doubles as the BFS queue, which is ordered by distance.
+	for(size_t Head = 0; Head < vReachable.size(); ++Head)
+	{
+		const int Node = vReachable[Head];
+		const int Distance = m_vStates[Node].m_Cost;
+		if(Distance >= Depth)
+			break;
+		for(int i = m_Graph.m_vOutOffsets[Node]; i < m_Graph.m_vOutOffsets[Node + 1]; ++i)
+		{
+			const int Next = m_Graph.m_vOutEdges[i].m_Node;
+			if(m_vStates[Next].m_Stamp == m_Stamp)
+				continue;
+			m_vStates[Next] = {m_Stamp, Distance + 1};
+			vReachable.push_back(Next);
+		}
+	}
+}
+
 void CGTrainPathfinder::Build(CGTrainGoal &Goal, int Start, int Distance, unsigned Seed)
 {
 	Goal.m_Ready = false;

@@ -3165,6 +3165,7 @@ if(SERVER)
     gamemodes/ddnet.h
     gamemodes/gtrain.cpp
     gamemodes/gtrain.h
+    gamemodes/gtrain_elo.h
     gamemodes/gtrain_path.cpp
     gamemodes/gtrain_path.h
     gamemodes/mod.cpp
@@ -3462,6 +3463,7 @@ if((GTEST_FOUND OR DOWNLOAD_GTEST) AND SERVER)
     fs_test.cpp
     gameworld_test.cpp
     git_revision_test.cpp
+    gtrain_elo_test.cpp
     gtrain_path_test.cpp
     hash_test.cpp
     huffman_test.cpp

@@ -95,6 +95,8 @@ public:
 	void Build(CGTrainGoal &Goal, int Start, int Distance, unsigned Seed);
 	void BuildField(CGTrainGoal &Goal, int Node, int Depth);
 	bool FindPath(const CGTrainGoal &Goal, int Start, std::vector<int> &vRoute) const;
+	// Every node within Depth steps of any source, sources included.
+	void FindReachable(const std::vector<int> &vSources, int Depth, std::vector<int> &vReachable);
 };
 
 #endif // GAME_SERVER_GAMEMODES_GTRAIN_PATH_H

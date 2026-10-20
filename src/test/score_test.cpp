@@ -6,6 +6,7 @@
 #include <engine/server/databases/connection_pool.h>
 #include <engine/shared/config.h>
 
+#include <game/server/gamemodes/gtrain_elo.h>
 #include <game/server/scoreworker.h>
 
 #include <gmock/gmock.h>
@@ -48,6 +49,8 @@ struct Score : public testing::TestWithParam<IDbConnection *> // NOLINT(readabil
 		ASSERT_TRUE(m_pConn->PrepareStatement("DELETE FROM record_maps", m_aError, sizeof(m_aError))) << m_aError;
 		ASSERT_TRUE(m_pConn->ExecuteUpdate(&NumInserted, m_aError, sizeof(m_aError))) << m_aError;
 		ASSERT_TRUE(m_pConn->PrepareStatement("DELETE FROM record_points", m_aError, sizeof(m_aError))) << m_aError;
+		ASSERT_TRUE(m_pConn->ExecuteUpdate(&NumInserted, m_aError, sizeof(m_aError))) << m_aError;
+		ASSERT_TRUE(m_pConn->PrepareStatement("DELETE FROM record_elo", m_aError, sizeof(m_aError))) << m_aError;
 		ASSERT_TRUE(m_pConn->ExecuteUpdate(&NumInserted, m_aError, sizeof(m_aError))) << m_aError;
 		ASSERT_TRUE(m_pConn->PrepareStatement("DELETE FROM record_saves", m_aError, sizeof(m_aError))) << m_aError;
 		ASSERT_TRUE(m_pConn->ExecuteUpdate(&NumInserted, m_aError, sizeof(m_aError))) << m_aError;
@@ -655,6 +658,144 @@ TEST_P(Points, EqualPointsTop)
 			"-------------------------------"});
 }
 
+struct Elo : public Score // NOLINT(readability-identifier-naming)
+{
+	Elo()
+	{
+		str_copy(m_PlayerRequest.m_aName, "nameless tee");
+		str_copy(m_PlayerRequest.m_aRequestingPlayer, "brainless tee");
+		m_PlayerRequest.m_Offset = 0;
+	}
+
+	void AddPoints(const char *pName, int64_t Points, Write w = Write::NORMAL)
+	{
+		CSqlEloData EloData;
+		str_copy(EloData.m_aName, pName);
+		EloData.m_Points = Points;
+		ASSERT_TRUE(CScoreWorker::AddElo(m_pConn, &EloData, w, m_aError, sizeof(m_aError))) << m_aError;
+	}
+
+	static std::string EloText(int64_t Points)
+	{
+		return std::to_string((int)GTrainElo::FromPoints(Points));
+	}
+
+	void Reset()
+	{
+		m_pPlayerResult = std::make_shared<CScorePlayerResult>();
+		m_PlayerRequest.m_pResult = m_pPlayerResult;
+	}
+};
+
+TEST_P(Elo, NoElo)
+{
+	ASSERT_TRUE(CScoreWorker::ShowElo(m_pConn, &m_PlayerRequest, m_aError, sizeof(m_aError))) << m_aError;
+	ExpectLines(m_pPlayerResult, {"nameless tee has not gained any ELO so far"});
+}
+
+TEST_P(Elo, NoEloTop)
+{
+	ASSERT_TRUE(CScoreWorker::ShowTopElo(m_pConn, &m_PlayerRequest, m_aError, sizeof(m_aError))) << m_aError;
+	ExpectLines(m_pPlayerResult, {"-------- Top ELO --------",
+					     "-------------------------------"});
+}
+
+TEST_P(Elo, PointsAddUp)
+{
+	AddPoints("nameless tee", 100'000'000);
+	AddPoints("nameless tee", 300'000'000);
+	ASSERT_TRUE(CScoreWorker::ShowElo(m_pConn, &m_PlayerRequest, m_aError, sizeof(m_aError))) << m_aError;
+	const std::string Line = "1. nameless tee ELO: " + EloText(400'000'000) + " (400000000 points), requested by brainless tee";
+	ExpectLines(m_pPlayerResult, {Line.c_str()}, true);
+	EXPECT_NE(EloText(400'000'000), "0");
+}
+
+TEST_P(Elo, Load)
+{
+	AddPoints("nameless tee", 100);
+	AddPoints("nameless tee", 200);
+	AddPoints("brainless tee", 1);
+	auto pResult = std::make_shared<CScoreEloResult>();
+	CSqlEloData Request(pResult);
+	str_copy(Request.m_aName, "nameless tee");
+	ASSERT_TRUE(CScoreWorker::LoadElo(m_pConn, &Request, m_aError, sizeof(m_aError))) << m_aError;
+	EXPECT_EQ(pResult->m_Points, 300);
+
+	auto pMissing = std::make_shared<CScoreEloResult>();
+	CSqlEloData MissingRequest(pMissing);
+	str_copy(MissingRequest.m_aName, "tee");
+	ASSERT_TRUE(CScoreWorker::LoadElo(m_pConn, &MissingRequest, m_aError, sizeof(m_aError))) << m_aError;
+	EXPECT_EQ(pMissing->m_Points, 0);
+}
+
+TEST_P(Elo, OnlyTheMainDatabaseCounts)
+{
+	// Like DDNet points, ELO points are not kept in backup databases.
+	AddPoints("nameless tee", 100, Write::BACKUP_FIRST);
+	AddPoints("nameless tee", 100, Write::NORMAL_SUCCEEDED);
+	AddPoints("nameless tee", 100, Write::NORMAL_FAILED);
+	ASSERT_TRUE(CScoreWorker::ShowElo(m_pConn, &m_PlayerRequest, m_aError, sizeof(m_aError))) << m_aError;
+	ExpectLines(m_pPlayerResult, {"nameless tee has not gained any ELO so far"});
+}
+
+TEST_P(Elo, PointsBeyondInt32)
+{
+	AddPoints("nameless tee", 8'192'000);
+	AddPoints("nameless tee", 3'000'000'000);
+	ASSERT_TRUE(CScoreWorker::ShowElo(m_pConn, &m_PlayerRequest, m_aError, sizeof(m_aError))) << m_aError;
+	const std::string Line = "1. nameless tee ELO: " + EloText(3'008'192'000) + " (3008192000 points), requested by brainless tee";
+	ExpectLines(m_pPlayerResult, {Line.c_str()}, true);
+}
+
+TEST_P(Elo, RanksAndTopByPoints)
+{
+	AddPoints("nameless tee", 2'000'000'000);
+	AddPoints("brainless tee", 3'000'000'000);
+	AddPoints("tee", 1'000'000'000);
+	ASSERT_TRUE(CScoreWorker::ShowElo(m_pConn, &m_PlayerRequest, m_aError, sizeof(m_aError))) << m_aError;
+	const std::string Second = "2. nameless tee ELO: " + EloText(2'000'000'000) + " (2000000000 points), requested by brainless tee";
+	ExpectLines(m_pPlayerResult, {Second.c_str()}, true);
+
+	AddPoints("nameless tee", 1'000'000'000);
+	Reset();
+	ASSERT_TRUE(CScoreWorker::ShowTopElo(m_pConn, &m_PlayerRequest, m_aError, sizeof(m_aError))) << m_aError;
+	const std::string Brainless = "1. brainless tee ELO: " + EloText(3'000'000'000);
+	const std::string Nameless = "1. nameless tee ELO: " + EloText(3'000'000'000);
+	const std::string Tee = "3. tee ELO: " + EloText(1'000'000'000);
+	ExpectLines(m_pPlayerResult,
+		{"-------- Top ELO --------",
+			Brainless.c_str(),
+			Nameless.c_str(),
+			Tee.c_str(),
+			"-------------------------------"});
+
+	Reset();
+	m_PlayerRequest.m_Offset = 3;
+	ASSERT_TRUE(CScoreWorker::ShowTopElo(m_pConn, &m_PlayerRequest, m_aError, sizeof(m_aError))) << m_aError;
+	ExpectLines(m_pPlayerResult,
+		{"-------- Top ELO --------",
+			Tee.c_str(),
+			"-------------------------------"});
+}
+
+TEST_P(Elo, MapDifficulty)
+{
+	auto pResult = std::make_shared<CScoreMapDifficultyResult>();
+	CSqlMapDifficultyRequest Request(pResult);
+	str_copy(Request.m_aMap, "Kobra 3");
+	ASSERT_TRUE(CScoreWorker::LoadMapDifficulty(m_pConn, &Request, m_aError, sizeof(m_aError))) << m_aError;
+	EXPECT_STREQ(pResult->m_aServer, "Novice");
+	EXPECT_EQ(pResult->m_Stars, 5);
+
+	// Map names match exactly, unlike /mapinfo.
+	auto pMissing = std::make_shared<CScoreMapDifficultyResult>();
+	CSqlMapDifficultyRequest MissingRequest(pMissing);
+	str_copy(MissingRequest.m_aMap, "Kobra");
+	ASSERT_TRUE(CScoreWorker::LoadMapDifficulty(m_pConn, &MissingRequest, m_aError, sizeof(m_aError))) << m_aError;
+	EXPECT_STREQ(pMissing->m_aServer, "");
+	EXPECT_EQ(pMissing->m_Stars, 0);
+}
+
 struct RandomMap : public Score // NOLINT(readability-identifier-naming)
 {
 	std::shared_ptr<CScoreRandomMapResult> m_pRandomMapResult{std::make_shared<CScoreRandomMapResult>(0)};
@@ -766,4 +907,5 @@ INSTANTIATE(BigTeamScore);
 INSTANTIATE(MapInfo);
 INSTANTIATE(MapVote);
 INSTANTIATE(Points);
+INSTANTIATE(Elo);
 INSTANTIATE(RandomMap);

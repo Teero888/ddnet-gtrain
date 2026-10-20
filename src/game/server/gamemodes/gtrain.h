@@ -9,9 +9,13 @@
 #include <engine/shared/protocol.h>
 
 #include <array>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <vector>
+
+struct CScoreEloResult;
+struct CScoreMapDifficultyResult;
 
 // Gores training: players get placed at random positions between
 // the start and the finish line, killing places them again.
@@ -71,8 +75,17 @@ class CGameControllerGTrain : public CGameControllerDDNet
 	std::array<std::optional<int>, MAX_CLIENTS> m_aDoorSnapIds;
 	std::optional<int> m_FlagSnapId;
 	std::array<std::optional<int>, NUM_DIRECTION_PARTICLES> m_aDirectionSnapIds;
+	std::shared_ptr<CScoreMapDifficultyResult> m_pMapDifficultyResult;
+	// Difficulty step of the map for capture points, unset on maps without
+	// ELO.
+	std::optional<int> m_EloStep;
+	// The ELO points of each player's name: their gains since requesting them
+	// from the database, plus the loaded points once the request completes.
+	int64_t m_aEloPoints[MAX_CLIENTS] = {};
+	std::shared_ptr<CScoreEloResult> m_apEloResults[MAX_CLIENTS];
 
 	void FindTrainPositions();
+	void ExcludeStartArea();
 	int HoverDoorIndex(int Start, class CCharacter *pChr) const;
 	void DelayHoverDoor(class CCharacter *pChr);
 	void PlaceRandomly(class CCharacter *pChr);
@@ -85,7 +98,14 @@ class CGameControllerGTrain : public CGameControllerDDNet
 	void SendFightChat(int Group, const char *pMessage);
 	void KeepWeapons(class CCharacter *pChr);
 	void UpdateFightTeams();
-	void AnnounceFightScore(int Winner);
+	struct CEloGain
+	{
+		double m_Elo;
+		double m_SpeedFactor;
+	};
+	static void FormatCaptureResult(char *pBuf, int BufSize, int Fails, const std::optional<CEloGain> &Gain);
+	void AnnounceFightScore(int Winner, const std::optional<CEloGain> &Gain);
+	std::optional<CEloGain> AwardElo(int ClientId);
 	int PathNode(vec2 Pos) const;
 	void UpdatePath(class CCharacter *pChr);
 	void CheckGoal(class CCharacter *pChr);
@@ -94,6 +114,13 @@ public:
 	CGameControllerGTrain(class CGameContext *pGameServer);
 	~CGameControllerGTrain() override;
 	static bool AddSwitchLayer(class IStorage *pStorage, const char *pPath, char *pNewPath, int NewPathSize);
+	// 0 for Easy with one star up to 14 for Extreme with three, every step
+	// makes captures worth more. Other categories and ratings have no ELO.
+	static std::optional<int> EloStep(const char *pServer, int Stars);
+	void LoadMapDifficulty();
+	void SetMapDifficulty(const char *pServer, int Stars);
+	// Loads the ELO of the player's current name, after joining or renaming.
+	void LoadElo(int ClientId);
 
 	void OnCharacterSpawn(class CCharacter *pChr) override;
 	int OnCharacterDeath(class CCharacter *pVictim, class CPlayer *pKiller, int Weapon) override;

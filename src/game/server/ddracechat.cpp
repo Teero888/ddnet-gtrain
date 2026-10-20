@@ -2411,6 +2411,12 @@ void CGameContext::ConPoints(IConsole::IResult *pResult, void *pUserData)
 	CGameContext *pSelf = (CGameContext *)pUserData;
 	if(!CheckClientId(pResult->m_ClientId))
 		return;
+	// GTrain attempts never finish the map, its players collect ELO instead.
+	if(dynamic_cast<CGameControllerGTrain *>(pSelf->m_pController))
+	{
+		ConElo(pResult, pUserData);
+		return;
+	}
 
 	if(pResult->NumArguments() > 0)
 	{
@@ -2429,6 +2435,11 @@ void CGameContext::ConTopPoints(IConsole::IResult *pResult, void *pUserData)
 	CGameContext *pSelf = (CGameContext *)pUserData;
 	if(!CheckClientId(pResult->m_ClientId))
 		return;
+	if(dynamic_cast<CGameControllerGTrain *>(pSelf->m_pController))
+	{
+		ConTopElo(pResult, pUserData);
+		return;
+	}
 
 	if(g_Config.m_SvHideScore)
 	{
@@ -2440,6 +2451,52 @@ void CGameContext::ConTopPoints(IConsole::IResult *pResult, void *pUserData)
 		pSelf->Score()->ShowTopPoints(pResult->m_ClientId, pResult->GetInteger(0));
 	else
 		pSelf->Score()->ShowTopPoints(pResult->m_ClientId);
+}
+
+void CGameContext::ConElo(IConsole::IResult *pResult, void *pUserData)
+{
+	CGameContext *pSelf = (CGameContext *)pUserData;
+	if(!CheckClientId(pResult->m_ClientId))
+		return;
+	if(!dynamic_cast<CGameControllerGTrain *>(pSelf->m_pController))
+	{
+		pSelf->SendChatTarget(pResult->m_ClientId, "ELO is only available in GTrain.");
+		return;
+	}
+
+	if(pResult->NumArguments() > 0)
+	{
+		if(!g_Config.m_SvHideScore)
+			pSelf->Score()->ShowElo(pResult->m_ClientId, pResult->GetString(0));
+		else
+			log_info("chatresp", "Showing the ELO of other players is not allowed on this server.");
+	}
+	else
+		pSelf->Score()->ShowElo(pResult->m_ClientId,
+			pSelf->Server()->ClientName(pResult->m_ClientId));
+}
+
+void CGameContext::ConTopElo(IConsole::IResult *pResult, void *pUserData)
+{
+	CGameContext *pSelf = (CGameContext *)pUserData;
+	if(!CheckClientId(pResult->m_ClientId))
+		return;
+	if(!dynamic_cast<CGameControllerGTrain *>(pSelf->m_pController))
+	{
+		pSelf->SendChatTarget(pResult->m_ClientId, "ELO is only available in GTrain.");
+		return;
+	}
+
+	if(g_Config.m_SvHideScore)
+	{
+		log_info("chatresp", "Showing the ELO ladder is not allowed on this server.");
+		return;
+	}
+
+	if(pResult->NumArguments() > 0)
+		pSelf->Score()->ShowTopElo(pResult->m_ClientId, pResult->GetInteger(0));
+	else
+		pSelf->Score()->ShowTopElo(pResult->m_ClientId);
 }
 
 void CGameContext::ConTimeCP(IConsole::IResult *pResult, void *pUserData)

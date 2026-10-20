@@ -27,12 +27,15 @@
 #include <game/server/gamecontext.h>
 #include <game/server/gamecontroller.h>
 #include <game/server/gamemodes/gtrain.h>
+#include <game/server/gamemodes/gtrain_elo.h>
 #include <game/server/gameworld.h>
 #include <game/server/player.h>
+#include <game/server/score.h>
 #include <game/version.h>
 
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -222,6 +225,8 @@ public:
 		g_Config.m_SvGtrainGoalDistance = 3;
 		// Most tests check the zero gravity hover, hover doors have their own.
 		g_Config.m_SvGtrainHoverDoor = 0;
+		// The corridor is short, skipping its start has its own test.
+		g_Config.m_SvGtrainStartExclusion = 0;
 		g_Config.m_SvSoloServer = 1;
 		g_Config.m_SvTeam = SV_TEAM_FORCED_SOLO;
 		GameServer()->GlobalTuning()->Set("player_collision", 0);
@@ -1846,6 +1851,283 @@ TEST_F(GameWorld, GTrainCaptureCountsFailsAtTheSamePosition)
 	EXPECT_NE(Capture(Anna).find("'Anna' captured the flag (0 fails)."), std::string::npos);
 }
 
+TEST_F(GameWorld, GTrainCapturesEarnEloByDifficultySpeedAndGoalDistance)
+{
+	// Each star and difficulty is worth more, other maps earn nothing.
+	EXPECT_EQ(CGameControllerGTrain::EloStep("Easy", 1), 0);
+	EXPECT_EQ(CGameControllerGTrain::EloStep("Easy", 3), 2);
+	EXPECT_EQ(CGameControllerGTrain::EloStep("Main", 1), 3);
+	EXPECT_EQ(CGameControllerGTrain::EloStep("hard", 2), 7);
+	EXPECT_EQ(CGameControllerGTrain::EloStep("Insane", 3), 11);
+	EXPECT_EQ(CGameControllerGTrain::EloStep("Extreme", 3), 14);
+	const std::pair<const char *, int> aWithoutElo[] = {{"Mod", 2}, {"Solo", 1}, {"Others", 3}, {"Novice", 1}, {"", 1}, {"Hard", 0}, {"Hard", 4}};
+	for(const auto &[pServer, Stars] : aWithoutElo)
+		EXPECT_FALSE(CGameControllerGTrain::EloStep(pServer, Stars)) << pServer << " " << Stars;
+
+	PrepareTrainingCorridor();
+	g_Config.m_SvSpamprotection = 0;
+	const auto vIds = SpawnTrainingPlayers({"Runner", "Anna", "Bob"});
+	const int Runner = vIds[0], Bob = vIds[2];
+	auto *pController = static_cast<CGameControllerGTrain *>(GameServer()->m_pController);
+	// The corridor is one tile high, so goals are as many tiles away as they are wide.
+	const auto GoalTiles = [&](int ClientId) {
+		return (int)std::abs(TrainingGoal(ClientId).x - GameServer()->GetPlayerChar(ClientId)->m_Pos.x) / 32;
+	};
+	const auto Capture = [&](int ClientId, int Ticks = 0) {
+		for(int Other : vIds)
+			if(CCharacter *pChr = GameServer()->GetPlayerChar(Other))
+				pChr->Unfreeze();
+		pController->Tick();
+		m_pServer->AdvanceTicks(Ticks);
+		CCharacter *pChr = GameServer()->GetPlayerChar(ClientId);
+		pChr->m_Pos = pChr->m_PrevPos = TrainingGoal(ClientId);
+		pChr->SetPosition(pChr->m_Pos);
+		CMemoryLogger Logger;
+		{
+			CLogScope Scope(&Logger);
+			pController->Tick();
+		}
+		return Logger.ConcatenatedLines();
+	};
+	// The ELO a capture shows depends on the points the player had before.
+	int64_t aPoints[MAX_CLIENTS] = {};
+	const auto Gain = [&](int ClientId, int Step, int Tiles, double Seconds) {
+		const int64_t Before = aPoints[ClientId];
+		aPoints[ClientId] += GTrainElo::CapturePoints(Step, Tiles, Seconds);
+		char aGain[64];
+		str_format(aGain, sizeof(aGain), "+%.2f ELO, %.1fx speed", GTrainElo::FromPoints(aPoints[ClientId]) - GTrainElo::FromPoints(Before), GTrainElo::SpeedFactor(Step, Tiles, Seconds));
+		return std::string(aGain);
+	};
+	const auto Help = [&]() {
+		m_pServer->m_avChatMessages[Runner].clear();
+		Say(Runner, "/help");
+		return m_pServer->m_avChatMessages[Runner].back();
+	};
+
+	// Until the map's difficulty is known, captures earn nothing.
+	std::string Messages = Capture(Runner);
+	EXPECT_NE(Messages.find("'Runner' captured the flag in 0.00 seconds (0 fails)."), std::string::npos);
+	EXPECT_EQ(Messages.find("ELO"), std::string::npos);
+
+	// Instant captures are as fast as it gets.
+	pController->SetMapDifficulty("Hard", 2);
+	EXPECT_EQ(Help(), "Captures here earn 1709 points per goal tile (Hard ★★☆), half to twice that by speed.");
+	int Tiles = GoalTiles(Runner);
+	ASSERT_GT(Tiles, 0);
+	EXPECT_NE(Capture(Runner).find("(0 fails, " + Gain(Runner, 7, Tiles, 0) + ")."), std::string::npos);
+	EXPECT_EQ(aPoints[Runner], std::llround(Tiles * GTrainElo::PointsPerTile(7) * 2));
+	// Longer goals earn more, retries don't change what a capture earns.
+	pController->Distance(Runner, 6);
+	// Starts close to the finish get shorter goals.
+	for(int Attempt = 0; Attempt < 100 && Tiles != 6; ++Attempt)
+	{
+		GameServer()->m_apPlayers[Runner]->KillCharacter(WEAPON_SELF);
+		GameServer()->m_apPlayers[Runner]->ForceSpawn(vec2(80, 80));
+		pController->Tick();
+		Tiles = GoalTiles(Runner);
+	}
+	ASSERT_EQ(Tiles, 6);
+	m_pServer->Console()->ExecuteLineFlag("r", CFGFLAG_CHAT, Runner);
+	EXPECT_NE(Capture(Runner).find("(1 fail, " + Gain(Runner, 7, Tiles, 0) + ")."), std::string::npos);
+
+	// Taking a second for a few tiles of an Extreme map is slow.
+	pController->SetMapDifficulty("Extreme", 3);
+	Tiles = GoalTiles(Runner);
+	ASSERT_LT(GTrainElo::SpeedFactor(14, Tiles, 1.0), 1);
+	EXPECT_NE(Capture(Runner, SERVER_TICK_SPEED).find("in 1.00 seconds (0 fails, " + Gain(Runner, 14, Tiles, 1.0) + ")."), std::string::npos);
+
+	// The capturer of a fight earns ELO, the others don't.
+	pController->Fight(Bob, "Anna");
+	pController->Tick();
+	Tiles = GoalTiles(Bob);
+	Messages = Capture(Bob);
+	EXPECT_NE(Messages.find("'Bob' captured the flag (0 fails, " + Gain(Bob, 14, Tiles, 0) + "). Fight score (first to 10): 'Anna': 0, 'Bob': 1"), std::string::npos);
+	EXPECT_EQ(Messages.find("'Anna' captured"), std::string::npos);
+
+	pController->SetMapDifficulty("Mod", 3);
+	EXPECT_EQ(Help(), "Captures on this map earn no ELO.");
+	Messages = Capture(Runner);
+	EXPECT_NE(Messages.find("'Runner' captured the flag in 0.00 seconds (0 fails)."), std::string::npos);
+	EXPECT_EQ(Messages.find("ELO"), std::string::npos);
+}
+
+TEST_F(GameWorld, GTrainEloScoreboard)
+{
+	// ELO points are stored per name in the database, which runs jobs in order on its own thread.
+	char aDatabase[64];
+	ASSERT_LT(str_length(m_TestInfo.m_aFilename) + str_length("/elo.sqlite"), (int)sizeof(aDatabase));
+	str_format(aDatabase, sizeof(aDatabase), "%s/elo.sqlite", m_TestInfo.m_aFilename);
+	m_pServer->DbPool()->RegisterSqliteDatabase(CDbConnectionPool::READ, aDatabase);
+	m_pServer->DbPool()->RegisterSqliteDatabase(CDbConnectionPool::WRITE, aDatabase);
+	PrepareTrainingCorridor();
+	g_Config.m_SvSpamprotection = 0;
+	g_Config.m_SvSqlQueriesDelay = 0;
+	const auto vIds = SpawnTrainingPlayers({"Runner", "Anna", "Bob"});
+	const int Runner = vIds[0], Anna = vIds[1], Bob = vIds[2];
+	// Players only get query results after their first snapshots.
+	for(int ClientId : vIds)
+		GameServer()->m_apPlayers[ClientId]->m_SentSnaps = 3;
+	auto *pController = static_cast<CGameControllerGTrain *>(GameServer()->m_pController);
+	const auto Score = [&](int ClientId) { return pController->SnapPlayerScore(ClientId, GameServer()->m_apPlayers[ClientId]); };
+	const auto Elo = [](int64_t Points) { return (int)GTrainElo::FromPoints(Points); };
+	// A job queued last completes after all earlier ones.
+	const auto WaitForDatabase = [&]() {
+		auto pLast = std::make_shared<CScoreEloResult>();
+		GameServer()->Score()->LoadElo(Runner, pLast);
+		for(int i = 0; i < 1000 && !pLast->m_Completed; ++i)
+			std::this_thread::sleep_for(std::chrono::milliseconds(5));
+		EXPECT_TRUE(pLast->m_Completed);
+		pController->Tick();
+		for(int ClientId : vIds)
+			GameServer()->m_apPlayers[ClientId]->Tick();
+		return pLast->m_Success;
+	};
+	// Reads fail until the database is registered.
+	bool Ready = false;
+	for(int i = 0; i < 100 && !Ready; ++i)
+		Ready = WaitForDatabase();
+	ASSERT_TRUE(Ready);
+	const auto GoalTiles = [&](int ClientId) {
+		return (int)std::abs(TrainingGoal(ClientId).x - GameServer()->GetPlayerChar(ClientId)->m_Pos.x) / 32;
+	};
+	// Instant captures of an Extreme map with three stars.
+	const auto Capture = [&](int ClientId) {
+		for(int Other : vIds)
+			if(CCharacter *pChr = GameServer()->GetPlayerChar(Other))
+				pChr->Unfreeze();
+		pController->Tick();
+		const int64_t Points = GTrainElo::CapturePoints(GTrainElo::MAX_STEP, GoalTiles(ClientId), 0);
+		CCharacter *pChr = GameServer()->GetPlayerChar(ClientId);
+		pChr->m_Pos = pChr->m_PrevPos = TrainingGoal(ClientId);
+		pChr->SetPosition(pChr->m_Pos);
+		pController->Tick();
+		return Points;
+	};
+	const auto Rename = [&](int ClientId, const char *pName) {
+		CNetMsg_Cl_ChangeInfo Msg = {};
+		Msg.m_pName = pName;
+		Msg.m_pClan = "";
+		Msg.m_pSkin = "default";
+		GameServer()->OnChangeInfoNetMessage(&Msg, ClientId);
+		EXPECT_STREQ(m_pServer->ClientName(ClientId), pName);
+	};
+
+	// Points from earlier grinding load once the names are set.
+	GameServer()->Score()->AddElo(Runner, 2'000'000'000);
+	GameServer()->Score()->AddElo(Bob, 1'000'000'000);
+	for(int ClientId : vIds)
+		pController->LoadElo(ClientId);
+	ASSERT_TRUE(WaitForDatabase());
+	EXPECT_EQ(Score(Runner), Elo(2'000'000'000));
+	EXPECT_GT(Score(Runner), 0);
+	pController->SetMapDifficulty("Extreme", 3);
+	int64_t RunnerPoints = 2'000'000'000 + Capture(Runner);
+	EXPECT_EQ(Score(Runner), Elo(RunnerPoints));
+	pController->Tick();
+	EXPECT_EQ(m_pServer->m_aClients[Runner].m_Score, Elo(RunnerPoints));
+
+	// Another name has its own ELO. Coming back loads the saved points, plus
+	// what was gained while loading them.
+	Rename(Runner, "Walker");
+	EXPECT_EQ(Score(Runner), 0);
+	ASSERT_TRUE(WaitForDatabase());
+	EXPECT_EQ(Score(Runner), 0);
+	Rename(Runner, "Runner");
+	RunnerPoints += Capture(Runner);
+	ASSERT_TRUE(WaitForDatabase());
+	EXPECT_EQ(Score(Runner), Elo(RunnerPoints));
+	pController->LoadElo(Runner);
+	ASSERT_TRUE(WaitForDatabase());
+	EXPECT_EQ(Score(Runner), Elo(RunnerPoints));
+
+	// Fighting players show their fight points, until they leave the fight.
+	pController->Fight(Bob, "Anna");
+	pController->Tick();
+	EXPECT_EQ(Score(Bob), 0);
+	const int64_t BobPoints = 1'000'000'000 + Capture(Bob);
+	EXPECT_EQ(Score(Bob), 1);
+	EXPECT_EQ(Score(Anna), 0);
+	pController->Fight(Bob, "");
+	pController->Tick();
+	EXPECT_EQ(Score(Bob), Elo(BobPoints));
+	EXPECT_EQ(m_pServer->m_aClients[Bob].m_Score, Elo(BobPoints));
+
+	// The server browser gets points rather than times.
+	m_pServer->m_aClients[Bob].m_DebugDummy = false;
+	CServer::CCache Cache;
+	m_pServer->CacheServerInfo(&Cache, SERVERINFO_EXTENDED, true);
+	m_pServer->m_aClients[Bob].m_DebugDummy = true;
+	std::string Info;
+	for(const auto &Chunk : Cache.m_vCache)
+		Info.append((const char *)Chunk.m_vData.data(), Chunk.m_vData.size());
+	EXPECT_NE(Info.find(std::string("Bob\0", 4)), std::string::npos);
+	EXPECT_NE(Info.find('\0' + std::to_string(Elo(BobPoints)) + '\0'), std::string::npos);
+	EXPECT_EQ(Info.find("-" + std::to_string(Elo(BobPoints))), std::string::npos);
+
+	// /points and /top5points show the ELO from the database.
+	m_pServer->AdvanceTicks(10);
+	m_pServer->m_avChatMessages[Anna].clear();
+	Say(Anna, "/points Runner");
+	ASSERT_TRUE(WaitForDatabase());
+	ASSERT_FALSE(m_pServer->m_avChatMessages[Anna].empty());
+	EXPECT_EQ(m_pServer->m_avChatMessages[Anna].back(), "1. Runner ELO: " + std::to_string(Elo(RunnerPoints)) + " (" + std::to_string(RunnerPoints) + " points), requested by Anna");
+	m_pServer->AdvanceTicks(10);
+	m_pServer->m_avChatMessages[Anna].clear();
+	Say(Anna, "/top5elo");
+	ASSERT_TRUE(WaitForDatabase());
+	const auto &vTop = m_pServer->m_avChatMessages[Anna];
+	ASSERT_EQ(vTop.size(), 4u);
+	EXPECT_EQ(vTop[0], "-------- Top ELO --------");
+	EXPECT_EQ(vTop[1], "1. Runner ELO: " + std::to_string(Elo(RunnerPoints)));
+	EXPECT_EQ(vTop[2], "2. Bob ELO: " + std::to_string(Elo(BobPoints)));
+
+	// ELO stops at its maximum.
+	GameServer()->Score()->AddElo(Anna, 1'000'000'000'000'000);
+	pController->LoadElo(Anna);
+	ASSERT_TRUE(WaitForDatabase());
+	EXPECT_EQ(Score(Anna), GTrainElo::MAX_ELO);
+}
+
+TEST_F(GameWorld, GTrainSkipsTheStartOfTheMap)
+{
+	PrepareTrainingCorridor();
+	// The start line is at x = 1, so x = 2 to 6 is within 5 tiles of it.
+	g_Config.m_SvGtrainStartExclusion = 5;
+	delete GameServer()->m_pController;
+	GameServer()->m_pController = new CGameControllerGTrain(GameServer());
+	const int Runner = SpawnTrainingPlayers({"Runner"})[0];
+	const float FirstAllowed = 7 * 32 + 16;
+	const auto NextAttempt = [&]() {
+		GameServer()->m_apPlayers[Runner]->KillCharacter(WEAPON_SELF);
+		GameServer()->m_apPlayers[Runner]->ForceSpawn(vec2(80, 80));
+		GameServer()->m_pController->Tick();
+	};
+	bool FoundFirstAllowed = false;
+	for(int Attempt = 0; Attempt < 1000 && !FoundFirstAllowed; ++Attempt)
+	{
+		const float StartX = GameServer()->GetPlayerChar(Runner)->m_Pos.x;
+		// Goals behind such a start would be in the start area too.
+		ASSERT_GE(StartX, FirstAllowed);
+		ASSERT_GE(TrainingGoal(Runner).x, FirstAllowed);
+		FoundFirstAllowed = StartX == FirstAllowed;
+		NextAttempt();
+	}
+	EXPECT_TRUE(FoundFirstAllowed);
+
+	// Maps entirely within the distance keep all their tiles.
+	g_Config.m_SvGtrainStartExclusion = 10000;
+	delete GameServer()->m_pController;
+	GameServer()->m_pController = new CGameControllerGTrain(GameServer());
+	bool FoundBesideStart = false;
+	for(int Attempt = 0; Attempt < 1000 && !FoundBesideStart; ++Attempt)
+	{
+		NextAttempt();
+		TrainingGoal(Runner);
+		FoundBesideStart = GameServer()->GetPlayerChar(Runner)->m_Pos.x == 2 * 32 + 16;
+	}
+	EXPECT_TRUE(FoundBesideStart);
+}
+
 TEST_F(GameWorld, GTrainRaceTimerRestartsWithEveryAttempt)
 {
 	PrepareTrainingCorridor();
@@ -2057,12 +2339,13 @@ TEST_F(GameWorld, GTrainHelpListsOnlyGTrainCommands)
 	m_pServer->m_avChatMessages[Runner].clear();
 	Say(Runner, "/help");
 	const auto &vMessages = m_pServer->m_avChatMessages[Runner];
-	ASSERT_EQ(vMessages.size(), 10);
+	ASSERT_EQ(vMessages.size(), 12);
 	EXPECT_EQ(vMessages.front(), "GTrain commands:");
+	EXPECT_EQ(vMessages.back(), "Captures on this map earn no ELO.");
 	std::string Help;
 	for(const auto &Message : vMessages)
 		Help += Message + "\n";
-	for(const char *pCommand : {"Kill:", "/r ", "/retry", "/fight", "/distance", "/nodj", "/scorelimit", "/shotgun", "/grenade", "/laser", "/ninja", "/freeplay"})
+	for(const char *pCommand : {"Kill:", "/r ", "/retry", "/fight", "/distance", "/nodj", "/scorelimit", "/shotgun", "/grenade", "/laser", "/ninja", "/freeplay", "/points", "/elo", "/top5points", "/top5elo"})
 		EXPECT_NE(Help.find(pCommand), std::string::npos) << pCommand;
 	for(const char *pOther : {"/cmdlist", "/practice", "/team", "/settings", "/rescue"})
 		EXPECT_EQ(Help.find(pOther), std::string::npos) << pOther;

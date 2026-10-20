@@ -84,6 +84,40 @@ struct CSqlLoadBestTimeRequest : ISqlData
 	char m_aMap[MAX_MAP_LENGTH];
 };
 
+struct CScoreMapDifficultyResult : ISqlResult
+{
+	// empty if the map is missing from the maps table
+	char m_aServer[32] = "";
+	int m_Stars = 0;
+};
+
+struct CSqlMapDifficultyRequest : ISqlData
+{
+	CSqlMapDifficultyRequest(std::shared_ptr<CScoreMapDifficultyResult> pResult) :
+		ISqlData(std::move(pResult))
+	{
+	}
+
+	char m_aMap[MAX_MAP_LENGTH];
+};
+
+struct CScoreEloResult : ISqlResult
+{
+	int64_t m_Points = 0;
+};
+
+struct CSqlEloData : ISqlData
+{
+	// Loading ELO has a result, adding it has none.
+	CSqlEloData(std::shared_ptr<CScoreEloResult> pResult = nullptr) :
+		ISqlData(std::move(pResult))
+	{
+	}
+
+	char m_aName[MAX_NAME_LENGTH];
+	int64_t m_Points = 0;
+};
+
 struct CSqlPlayerRequest : ISqlData
 {
 	CSqlPlayerRequest(std::shared_ptr<CScorePlayerResult> pResult) :
@@ -314,6 +348,10 @@ struct CScoreWorker
 	static bool ShowTimes(IDbConnection *pSqlServer, const ISqlData *pGameData, char *pError, int ErrorSize);
 	static bool ShowPoints(IDbConnection *pSqlServer, const ISqlData *pGameData, char *pError, int ErrorSize);
 	static bool ShowTopPoints(IDbConnection *pSqlServer, const ISqlData *pGameData, char *pError, int ErrorSize);
+	static bool LoadMapDifficulty(IDbConnection *pSqlServer, const ISqlData *pGameData, char *pError, int ErrorSize);
+	static bool LoadElo(IDbConnection *pSqlServer, const ISqlData *pGameData, char *pError, int ErrorSize);
+	static bool ShowElo(IDbConnection *pSqlServer, const ISqlData *pGameData, char *pError, int ErrorSize);
+	static bool ShowTopElo(IDbConnection *pSqlServer, const ISqlData *pGameData, char *pError, int ErrorSize);
 	static bool GetSaves(IDbConnection *pSqlServer, const ISqlData *pGameData, char *pError, int ErrorSize);
 
 	static bool SaveTeam(IDbConnection *pSqlServer, const ISqlData *pGameData, Write w, char *pError, int ErrorSize);
@@ -321,6 +359,7 @@ struct CScoreWorker
 
 	static bool SaveScore(IDbConnection *pSqlServer, const ISqlData *pGameData, Write w, char *pError, int ErrorSize);
 	static bool SaveTeamScore(IDbConnection *pSqlServer, const ISqlData *pGameData, Write w, char *pError, int ErrorSize);
+	static bool AddElo(IDbConnection *pSqlServer, const ISqlData *pGameData, Write w, char *pError, int ErrorSize);
 };
 
 #endif // GAME_SERVER_SCOREWORKER_H
