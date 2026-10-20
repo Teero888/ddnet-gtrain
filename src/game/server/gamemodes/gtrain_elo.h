@@ -17,8 +17,9 @@ namespace GTrainElo
 	inline constexpr int MAX_STEP = 14; // Extreme with three stars
 	inline constexpr double POINTS_PER_TILE = 100; // Easy with one star
 	inline constexpr double STEP_MULTIPLIER = 1.5;
-	// Typical capture speeds in path tiles per second, from the first captures
-	// on the KoG maps. Harder maps are slower, which must not cost points.
+	// Typical capture speeds in path tiles per second, a bit below those of
+	// the first captures on the KoG maps. Harder maps are slower, which must
+	// not cost points.
 	inline constexpr double EASY_TILES_PER_SECOND = 12;
 	inline constexpr double EXTREME_TILES_PER_SECOND = 6;
 	inline constexpr double MIN_SPEED_FACTOR = 0.5;

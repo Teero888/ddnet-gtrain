@@ -17,26 +17,27 @@ TEST(GTrainElo, PointsPerTileGrowByHalfPerStep)
 
 TEST(GTrainElo, SpeedFactorFollowsTheTypicalSpeedOfTheDifficulty)
 {
-	// Typical speeds go from 16 tiles per second on Easy to 8 on Extreme.
-	EXPECT_DOUBLE_EQ(SpeedFactor(0, 160, 10), 1);
-	EXPECT_DOUBLE_EQ(SpeedFactor(7, 120, 10), 1);
-	EXPECT_DOUBLE_EQ(SpeedFactor(MAX_STEP, 80, 10), 1);
-	EXPECT_DOUBLE_EQ(SpeedFactor(MAX_STEP, 120, 10), 1.5);
-	EXPECT_DOUBLE_EQ(SpeedFactor(MAX_STEP, 60, 10), 0.75);
-	// Fast captures have no limit, slow ones earn at least half. Instant
+	// Typical speeds go linearly from Easy to Extreme.
+	const double Easy = EASY_TILES_PER_SECOND, Extreme = EXTREME_TILES_PER_SECOND;
+	EXPECT_DOUBLE_EQ(SpeedFactor(0, 100, 100 / Easy), 1);
+	EXPECT_DOUBLE_EQ(SpeedFactor(MAX_STEP / 2, 100, 100 / ((Easy + Extreme) / 2)), 1);
+	EXPECT_DOUBLE_EQ(SpeedFactor(MAX_STEP, 100, 100 / Extreme), 1);
+	EXPECT_DOUBLE_EQ(SpeedFactor(MAX_STEP, 150, 100 / Extreme), 1.5);
+	EXPECT_DOUBLE_EQ(SpeedFactor(MAX_STEP, 75, 100 / Extreme), std::max(0.75, MIN_SPEED_FACTOR));
+	// Fast captures have no limit, slow ones earn a minimum. Instant
 	// captures count as taking one tick.
-	EXPECT_DOUBLE_EQ(SpeedFactor(MAX_STEP, 1000, 10), 12.5);
-	EXPECT_DOUBLE_EQ(SpeedFactor(MAX_STEP, 1, 10), MIN_SPEED_FACTOR);
-	EXPECT_DOUBLE_EQ(SpeedFactor(MAX_STEP, 100, 0), 100.0 * (double)SERVER_TICK_SPEED / 8);
+	EXPECT_DOUBLE_EQ(SpeedFactor(MAX_STEP, 1000, 100 / Extreme), 10);
+	EXPECT_DOUBLE_EQ(SpeedFactor(MAX_STEP, 1, 100), MIN_SPEED_FACTOR);
+	EXPECT_DOUBLE_EQ(SpeedFactor(MAX_STEP, 100, 0), 100.0 * (double)SERVER_TICK_SPEED / Extreme);
 	EXPECT_DOUBLE_EQ(SpeedFactor(MAX_STEP, 100, 0), SpeedFactor(MAX_STEP, 100, 1.0 / (double)SERVER_TICK_SPEED));
 }
 
 TEST(GTrainElo, CapturePoints)
 {
-	EXPECT_EQ(CapturePoints(0, 100, 100 / 16.0), 10000);
-	EXPECT_EQ(CapturePoints(7, 100, 100 / 12.0), 170859); // 100 * 1.5^7 * 100, rounded
-	EXPECT_EQ(CapturePoints(MAX_STEP, 100, 100 / 32.0), std::llround(100 * PointsPerTile(MAX_STEP) * 4));
-	EXPECT_EQ(CapturePoints(MAX_STEP, 100, 100), std::llround(100 * PointsPerTile(MAX_STEP) / 2));
+	EXPECT_EQ(CapturePoints(0, 100, 100 / EASY_TILES_PER_SECOND), 10000);
+	EXPECT_EQ(CapturePoints(7, 100, 100 / ((EASY_TILES_PER_SECOND + EXTREME_TILES_PER_SECOND) / 2)), 170859); // 100 * 1.5^7 * 100, rounded
+	EXPECT_EQ(CapturePoints(MAX_STEP, 100, 100 / (4 * EXTREME_TILES_PER_SECOND)), std::llround(100 * PointsPerTile(MAX_STEP) * 4));
+	EXPECT_EQ(CapturePoints(MAX_STEP, 100, 1000), std::llround(100 * PointsPerTile(MAX_STEP) * MIN_SPEED_FACTOR));
 }
 
 TEST(GTrainElo, LongerGoalsEarnMoreThanTheirLength)
@@ -44,7 +45,7 @@ TEST(GTrainElo, LongerGoalsEarnMoreThanTheirLength)
 	// At the same speed, twice the distance earns 2^DISTANCE_EXPONENT times the points.
 	ASSERT_GT(DISTANCE_EXPONENT, 1);
 	const double Doubled = std::pow(2, DISTANCE_EXPONENT);
-	const auto Typical = [](int Distance) { return CapturePoints(0, Distance, Distance / 16.0); };
+	const auto Typical = [](int Distance) { return CapturePoints(0, Distance, Distance / EASY_TILES_PER_SECOND); };
 	EXPECT_EQ(Typical(100), 10000);
 	EXPECT_EQ(Typical(200), std::llround(10000 * Doubled));
 	EXPECT_NEAR((double)Typical(200) / Typical(100), Doubled, 0.001);

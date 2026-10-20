@@ -2026,8 +2026,9 @@ TEST_F(GameWorld, GTrainCapturesEarnEloByDifficultySpeedAndGoalDistance)
 	int Tiles = GoalTiles(Runner);
 	ASSERT_GT(Tiles, 0);
 	EXPECT_NE(Capture(Runner).find("(0 fails, " + Gain(Runner, 7, Tiles, 0) + ")."), std::string::npos);
-	// They take one tick, at Hard 2 star's typical speed of 12 tiles per second.
-	EXPECT_EQ(aPoints[Runner], std::llround(100 * std::pow(Tiles / 100.0, GTrainElo::DISTANCE_EXPONENT) * GTrainElo::PointsPerTile(7) * (Tiles * SERVER_TICK_SPEED / 12.0)));
+	// They take one tick. Hard 2 star's typical speed is halfway between Easy and Extreme.
+	const double HardTypical = (GTrainElo::EASY_TILES_PER_SECOND + GTrainElo::EXTREME_TILES_PER_SECOND) / 2;
+	EXPECT_EQ(aPoints[Runner], std::llround(100 * std::pow(Tiles / 100.0, GTrainElo::DISTANCE_EXPONENT) * GTrainElo::PointsPerTile(7) * (Tiles * SERVER_TICK_SPEED / HardTypical)));
 	// Longer goals earn more, retries don't change what a capture earns. The
 	// corridor is too short for /distance, which takes at least 50 tiles.
 	g_Config.m_SvGtrainGoalDistance = 6;
@@ -2043,11 +2044,15 @@ TEST_F(GameWorld, GTrainCapturesEarnEloByDifficultySpeedAndGoalDistance)
 	m_pServer->Console()->ExecuteLineFlag("r", CFGFLAG_CHAT, Runner);
 	EXPECT_NE(Capture(Runner).find("(1 fail, " + Gain(Runner, 7, Tiles, 0) + ")."), std::string::npos);
 
-	// Taking a second for a few tiles of an Extreme map is slow.
+	// Half the typical speed of an Extreme map is slow.
 	pController->SetMapDifficulty("Extreme", 3);
 	Tiles = GoalTiles(Runner);
-	ASSERT_LT(GTrainElo::SpeedFactor(14, Tiles, 1.0), 1);
-	EXPECT_NE(Capture(Runner, SERVER_TICK_SPEED).find("in 1.00 seconds (0 fails, " + Gain(Runner, 14, Tiles, 1.0) + ")."), std::string::npos);
+	const int SlowTicks = (int)std::ceil(2 * Tiles / GTrainElo::EXTREME_TILES_PER_SECOND * SERVER_TICK_SPEED);
+	const double SlowSeconds = SlowTicks / (double)SERVER_TICK_SPEED;
+	ASSERT_LT(GTrainElo::SpeedFactor(14, Tiles, SlowSeconds), 1);
+	char aSlow[64];
+	str_format(aSlow, sizeof(aSlow), "in %.2f seconds (0 fails, ", SlowSeconds);
+	EXPECT_NE(Capture(Runner, SlowTicks).find(aSlow + Gain(Runner, 14, Tiles, SlowSeconds) + ")."), std::string::npos);
 
 	// The capturer of a fight earns ELO, the others don't.
 	pController->Fight(Bob, "Anna");
