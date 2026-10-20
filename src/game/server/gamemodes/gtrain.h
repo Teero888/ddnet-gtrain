@@ -88,8 +88,9 @@ class CGameControllerGTrain : public CGameControllerDDNet
 	void ExcludeStartArea();
 	int HoverDoorIndex(int Start, class CCharacter *pChr) const;
 	void DelayHoverDoor(class CCharacter *pChr);
-	void PlaceRandomly(class CCharacter *pChr);
-	void PlaceForAttempt(class CCharacter *pChr, const std::shared_ptr<CGTrainGoal> &pGoal, int Start, int TargetDistance, bool Retry);
+	void PlaceRandomly(class CPlayer *pPlayer);
+	// Deletes the player's character if it played already, see the definition.
+	void PlaceForAttempt(class CPlayer *pPlayer, const std::shared_ptr<CGTrainGoal> &pGoal, int Start, int TargetDistance, bool Retry);
 	void RestartFight(int Group);
 	bool LeaveFight(int ClientId, bool NewAttempt);
 	int FightSize(int Group) const;

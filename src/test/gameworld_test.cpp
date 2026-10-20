@@ -1851,6 +1851,117 @@ TEST_F(GameWorld, GTrainCaptureCountsFailsAtTheSamePosition)
 	EXPECT_NE(Capture(Anna).find("'Anna' captured the flag (0 fails)."), std::string::npos);
 }
 
+TEST_F(GameWorld, GTrainAttemptsStartWithoutPickups)
+{
+	PrepareTrainingCorridor();
+	const auto vIds = SpawnTrainingPlayers({"Runner", "Anna", "Bob"});
+	const int Runner = vIds[0], Anna = vIds[1], Bob = vIds[2];
+	auto *pController = static_cast<CGameControllerGTrain *>(GameServer()->m_pController);
+	const auto Pickup = [&](int ClientId) {
+		CCharacter *pChr = GameServer()->GetPlayerChar(ClientId);
+		pChr->GiveWeapon(WEAPON_SHOTGUN);
+		pChr->GiveWeapon(WEAPON_LASER);
+		pChr->SetJetpack(true);
+		pChr->SetEndlessHook(true);
+		pChr->SetEndlessJump(true);
+		pChr->SetCollisionDisabled(true);
+	};
+	const auto HasPickups = [&](int ClientId) {
+		CCharacter *pChr = GameServer()->GetPlayerChar(ClientId);
+		const CCharacterCore *pCore = pChr->Core();
+		return pChr->GetWeaponGot(WEAPON_SHOTGUN) || pChr->GetWeaponGot(WEAPON_LASER) ||
+		       pCore->m_Jetpack || pCore->m_EndlessHook || pCore->m_EndlessJump || pCore->m_CollisionDisabled;
+	};
+	const auto Pos = [&](int ClientId) { return GameServer()->GetPlayerChar(ClientId)->m_Pos; };
+	const auto DeathEvents = [&](vec2 Where) {
+		GameServer()->m_apPlayers[Runner]->m_ViewPos = Where;
+		CSnapshotBuffer Buffer;
+		m_pServer->m_SnapshotBuilder.Init();
+		GameServer()->m_Events.Snap(Runner);
+		m_pServer->m_SnapshotBuilder.Finish(&Buffer);
+		int Deaths = 0;
+		const CSnapshot *pSnap = Buffer.AsSnapshot();
+		for(int i = 0; i < pSnap->NumItems(); ++i)
+			Deaths += pSnap->GetItemType(i) == NETEVENTTYPE_DEATH;
+		return Deaths;
+	};
+	const auto Capture = [&](int ClientId) {
+		for(int Other : vIds)
+			if(CCharacter *pChr = GameServer()->GetPlayerChar(Other))
+				pChr->Unfreeze();
+		pController->Tick();
+		CCharacter *pChr = GameServer()->GetPlayerChar(ClientId);
+		pChr->m_Pos = pChr->m_PrevPos = TrainingGoal(ClientId);
+		pChr->SetPosition(pChr->m_Pos);
+		CMemoryLogger Logger;
+		{
+			CLogScope Scope(&Logger);
+			pController->Tick();
+		}
+		return Logger.ConcatenatedLines();
+	};
+
+	// /r starts over like a kill, only at the same spot and flag. Kept
+	// weapons stay, and there is no death splash.
+	m_pServer->Console()->ExecuteLineFlag("grenade", CFGFLAG_CHAT, Runner);
+	const vec2 Start = Pos(Runner);
+	const vec2 Goal = TrainingGoal(Runner);
+	Pickup(Runner);
+	CCharacter *pChr = GameServer()->GetPlayerChar(Runner);
+	pChr->SetPosition(Start + vec2(64, 0));
+	pChr->m_Pos = Start + vec2(64, 0);
+	ASSERT_TRUE(HasPickups(Runner));
+	GameServer()->m_Events.Clear();
+	m_pServer->Console()->ExecuteLineFlag("r", CFGFLAG_CHAT, Runner);
+	EXPECT_FALSE(HasPickups(Runner));
+	EXPECT_TRUE(GameServer()->GetPlayerChar(Runner)->GetWeaponGot(WEAPON_GRENADE));
+	EXPECT_EQ(Pos(Runner), Start);
+	EXPECT_EQ(TrainingGoal(Runner), Goal);
+	EXPECT_EQ(DeathEvents(Start + vec2(64, 0)), 0);
+	pController->Tick();
+	EXPECT_FALSE(HasPickups(Runner));
+	EXPECT_EQ(Pos(Runner), Start);
+
+	// The next spot after a capture starts over as well.
+	Pickup(Runner);
+	EXPECT_NE(Capture(Runner).find("'Runner' captured the flag in 0.00 seconds (1 fail)."), std::string::npos);
+	EXPECT_FALSE(HasPickups(Runner));
+	EXPECT_TRUE(GameServer()->GetPlayerChar(Runner)->GetWeaponGot(WEAPON_GRENADE));
+	EXPECT_EQ(DeathEvents(Goal), 0);
+	// Kills still show.
+	const vec2 KillPos = Pos(Runner);
+	GameServer()->m_apPlayers[Runner]->KillCharacter(WEAPON_SELF);
+	EXPECT_EQ(DeathEvents(KillPos), 1);
+	GameServer()->m_apPlayers[Runner]->ForceSpawn(vec2(80, 80));
+	pController->Tick();
+
+	// In a fight, /r only starts over for its user, the leader included.
+	pController->Fight(Bob, "Anna");
+	pController->Tick();
+	const vec2 FightGoal = TrainingGoal(Anna);
+	Pickup(Anna);
+	Pickup(Bob);
+	const vec2 AnnaPos = Pos(Anna) + vec2(32, 0);
+	GameServer()->GetPlayerChar(Anna)->SetPosition(AnnaPos);
+	GameServer()->GetPlayerChar(Anna)->m_Pos = AnnaPos;
+	m_pServer->Console()->ExecuteLineFlag("r", CFGFLAG_CHAT, Bob);
+	pController->Tick();
+	EXPECT_FALSE(HasPickups(Bob));
+	EXPECT_TRUE(HasPickups(Anna));
+	EXPECT_EQ(Pos(Anna), AnnaPos);
+	Pickup(Bob);
+	const vec2 BobPos = Pos(Bob) + vec2(32, 0);
+	GameServer()->GetPlayerChar(Bob)->SetPosition(BobPos);
+	GameServer()->GetPlayerChar(Bob)->m_Pos = BobPos;
+	m_pServer->Console()->ExecuteLineFlag("r", CFGFLAG_CHAT, Anna);
+	pController->Tick();
+	EXPECT_FALSE(HasPickups(Anna));
+	EXPECT_TRUE(HasPickups(Bob));
+	EXPECT_EQ(Pos(Bob), BobPos);
+	EXPECT_EQ(TrainingGoal(Anna), FightGoal);
+	EXPECT_EQ(TrainingGoal(Bob), FightGoal);
+}
+
 TEST_F(GameWorld, GTrainCapturesEarnEloByDifficultySpeedAndGoalDistance)
 {
 	// Each star and difficulty is worth more, other maps earn nothing.

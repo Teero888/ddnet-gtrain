@@ -469,12 +469,14 @@ void CGameControllerGTrain::ExcludeStartArea()
 	m_vTrainPositions = std::move(vRemaining);
 }
 
-void CGameControllerGTrain::PlaceRandomly(CCharacter *pChr)
+void CGameControllerGTrain::PlaceRandomly(CPlayer *pPlayer)
 {
-	const int ClientId = pChr->GetPlayer()->GetCid();
-	m_aPendingPlace[ClientId] = false;
+	const int ClientId = pPlayer->GetCid();
 	if(m_vTrainPositions.empty())
+	{
+		m_aPendingPlace[ClientId] = false;
 		return;
+	}
 
 	const vec2 Pos = m_vTrainPositions[secure_rand_below(m_vTrainPositions.size())];
 	CAttempt &Attempt = m_aAttempts[ClientId];
@@ -487,14 +489,31 @@ void CGameControllerGTrain::PlaceRandomly(CCharacter *pChr)
 		*Attempt.m_pGoal = CGTrainGoal();
 	else
 		m_Pathfinder.Build(*Attempt.m_pGoal, Start, TargetDistance, secure_rand_below(1 << 30));
-	PlaceForAttempt(pChr, Attempt.m_pGoal, Start, TargetDistance, false);
+	PlaceForAttempt(pPlayer, Attempt.m_pGoal, Start, TargetDistance, false);
 }
 
-void CGameControllerGTrain::PlaceForAttempt(CCharacter *pChr, const std::shared_ptr<CGTrainGoal> &pGoal, int Start, int TargetDistance, bool Retry)
+void CGameControllerGTrain::PlaceForAttempt(CPlayer *pPlayer, const std::shared_ptr<CGTrainGoal> &pGoal, int Start, int TargetDistance, bool Retry)
 {
-	const int ClientId = pChr->GetPlayer()->GetCid();
+	const int ClientId = pPlayer->GetCid();
 	const CSettings &Settings = m_aSettings[m_aFightGroup[ClientId]];
+	const vec2 Pos = m_PathGraph.m_vNodes[Start].m_Pos;
+	// Every attempt starts like after a kill, without the weapons and
+	// powerups picked up during the previous one. Characters that spawned
+	// for this placement are new already. The quiet death neither restarts
+	// the player's fight nor shows, and also deletes a dead character before
+	// its allocation pool slot is reused.
+	CCharacter *pChr = pPlayer->GetCharacter();
+	if(!pChr || !m_aPendingPlace[ClientId])
+	{
+		const bool SyncFightDeaths = m_SyncFightDeaths;
+		m_SyncFightDeaths = true;
+		pPlayer->KillCharacter(WEAPON_GAME, false, false);
+		m_SyncFightDeaths = SyncFightDeaths;
+		pChr = pPlayer->ForceSpawn(Pos);
+		pChr->SetSolo(true);
+	}
 	m_aPendingPlace[ClientId] = false;
+	KeepWeapons(pChr);
 	CAttempt &Attempt = m_aAttempts[ClientId];
 	// Goals are rebuilt in place, so a matching goal and start is not enough:
 	// only retries count as fails.
@@ -509,7 +528,6 @@ void CGameControllerGTrain::PlaceForAttempt(CCharacter *pChr, const std::shared_
 		Attempt.m_vRoute = pGoal->m_vInitialRoute;
 	Attempt.m_RouteIndex = 0;
 	Attempt.m_RouteNode = Start;
-	const vec2 Pos = m_PathGraph.m_vNodes[Start].m_Pos;
 	pChr->SetDeepFrozen(false);
 	pChr->SetLiveFrozen(false);
 	pChr->Unfreeze();
@@ -669,7 +687,6 @@ void CGameControllerGTrain::RestartFight(int Group)
 	if(m_vTrainPositions.empty())
 		return;
 	const int Start = PathNode(m_vTrainPositions[secure_rand_below(m_vTrainPositions.size())]);
-	const vec2 Pos = m_PathGraph.m_vNodes[Start].m_Pos;
 	const int TargetDistance = GoalDistance(Group);
 	// All owners of this goal belong to the resetting group. Build it once,
 	// then share it while keeping timers local to each player.
@@ -686,15 +703,7 @@ void CGameControllerGTrain::RestartFight(int Group)
 		CPlayer *pPlayer = GameServer()->m_apPlayers[ClientId];
 		if(m_aFightGroup[ClientId] != Group || !pPlayer || pPlayer->GetTeam() == TEAM_SPECTATORS)
 			continue;
-		CCharacter *pChr = pPlayer->GetCharacter();
-		if(!pChr)
-		{
-			// Delete a dead character before reusing its allocation pool slot.
-			pPlayer->KillCharacter(WEAPON_GAME, false);
-			pChr = pPlayer->ForceSpawn(Pos);
-			pChr->SetSolo(true);
-		}
-		PlaceForAttempt(pChr, pGoal, Start, TargetDistance, false);
+		PlaceForAttempt(pPlayer, pGoal, Start, TargetDistance, false);
 	}
 	m_SyncFightDeaths = false;
 }
@@ -799,7 +808,7 @@ void CGameControllerGTrain::Fight(int ClientId, const char *pName)
 			if((RemovedWeapons & (1 << Weapon)) && pChr->GetWeaponGot(Weapon))
 				pChr->GiveWeapon(Weapon, true);
 		if(JoinAttempt && pChr)
-			PlaceForAttempt(pChr, TargetAttempt.m_pGoal, TargetAttempt.m_Start, TargetAttempt.m_TargetDistance, false);
+			PlaceForAttempt(GameServer()->m_apPlayers[Other], TargetAttempt.m_pGoal, TargetAttempt.m_Start, TargetAttempt.m_TargetDistance, false);
 	}
 	m_aFightRestart[SourceGroup] = false;
 	if(!JoinAttempt)
@@ -834,8 +843,8 @@ void CGameControllerGTrain::Freeplay(int ClientId)
 	{
 		if(FightSize(Group) > 1)
 			RestartFight(Group);
-		else if(CCharacter *pChr = pPlayer->GetCharacter())
-			PlaceRandomly(pChr);
+		else if(pPlayer->GetCharacter())
+			PlaceRandomly(pPlayer);
 		else
 			m_aPendingPlace[ClientId] = true;
 	}
@@ -862,14 +871,7 @@ void CGameControllerGTrain::Retry(int ClientId)
 	// Peers keep their own state and respawn normally at the current goal.
 	if(Group == ClientId)
 		m_aFightRestart[Group] = false;
-	CCharacter *pChr = pPlayer->GetCharacter();
-	if(!pChr)
-	{
-		pPlayer->KillCharacter(WEAPON_GAME, false);
-		pChr = pPlayer->ForceSpawn(m_PathGraph.m_vNodes[Attempt.m_Start].m_Pos);
-		pChr->SetSolo(true);
-	}
-	PlaceForAttempt(pChr, Attempt.m_pGoal, Attempt.m_Start, Attempt.m_TargetDistance, true);
+	PlaceForAttempt(pPlayer, Attempt.m_pGoal, Attempt.m_Start, Attempt.m_TargetDistance, true);
 }
 
 void CGameControllerGTrain::Distance(int ClientId, std::optional<int> Tiles)
@@ -1132,7 +1134,7 @@ void CGameControllerGTrain::CheckGoal(CCharacter *pChr)
 			const double Seconds = (Server()->Tick() - Attempt.m_StartTick) / (double)Server()->TickSpeed();
 			str_format(aMessage, sizeof(aMessage), "'%s' captured the flag in %.2f seconds (%s).", Server()->ClientName(ClientId), Seconds, aResult);
 			GameServer()->SendChat(-1, TEAM_ALL, aMessage);
-			PlaceRandomly(pChr);
+			PlaceRandomly(pChr->GetPlayer());
 		}
 		for(int Other = 0; Other < MAX_CLIENTS; ++Other)
 		{
@@ -1374,9 +1376,9 @@ void CGameControllerGTrain::Tick()
 			// moving peers or rebuilding their shared goal. Players already
 			// in that attempt count it as a fail, joiners start fresh.
 			if(Group != ClientId && FightSize(Group) > 1 && GroupAttempt.m_pGoal && GroupAttempt.m_Start >= 0)
-				PlaceForAttempt(pChr, GroupAttempt.m_pGoal, GroupAttempt.m_Start, GroupAttempt.m_TargetDistance, true);
+				PlaceForAttempt(pChr->GetPlayer(), GroupAttempt.m_pGoal, GroupAttempt.m_Start, GroupAttempt.m_TargetDistance, true);
 			else
-				PlaceRandomly(pChr);
+				PlaceRandomly(pChr->GetPlayer());
 			continue;
 		}
 		CAttempt &Attempt = m_aAttempts[ClientId];

@@ -77,7 +77,8 @@ public:
 	void ResetInput();
 	void FireWeapon();
 
-	void Die(int Killer, int Weapon, bool SendKillMsg = true);
+	// Without effects, there is no death sound or splash.
+	void Die(int Killer, int Weapon, bool SendKillMsg = true, bool Effects = true);
 	bool TakeDamage(vec2 Force, int Dmg, int From, int Weapon);
 	void SendDeathMessageIfNotInLockedTeam(int Killer, int Weapon, int ModeSpecial);
 	void CancelSwapRequests();

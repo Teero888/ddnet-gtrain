@@ -1015,7 +1015,7 @@ void CCharacter::StopRecording()
 	}
 }
 
-void CCharacter::Die(int Killer, int Weapon, bool SendKillMsg)
+void CCharacter::Die(int Killer, int Weapon, bool SendKillMsg, bool Effects)
 {
 	if(Killer != WEAPON_GAME && m_aSetSavePos[RESCUEMODE_AUTO])
 		GetPlayer()->m_LastDeath = m_aRescueTee[RESCUEMODE_AUTO];
@@ -1028,8 +1028,11 @@ void CCharacter::Die(int Killer, int Weapon, bool SendKillMsg)
 	}
 
 	// a nice sound, and bursting tee death effect
-	GameServer()->CreateSound(m_Pos, SOUND_PLAYER_DIE, TeamMask());
-	GameServer()->CreateDeath(m_Pos, m_pPlayer->GetCid(), TeamMask());
+	if(Effects)
+	{
+		GameServer()->CreateSound(m_Pos, SOUND_PLAYER_DIE, TeamMask());
+		GameServer()->CreateDeath(m_Pos, m_pPlayer->GetCid(), TeamMask());
+	}
 
 	// this is to rate limit respawning to 3 secs
 	m_pPlayer->m_PreviousDieTick = m_pPlayer->m_DieTick;

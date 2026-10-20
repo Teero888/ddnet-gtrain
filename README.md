@@ -10,6 +10,7 @@ A server-side [DDNet](https://github.com/ddnet/ddnet) mod for training Gores map
 - Reach the flag to capture it. The capture message shows how many fails it took, your time when training alone and the [ELO](#elo) you earned, then you get a new spot.
 - The race timer restarts with every attempt, so it always shows the time of your current try.
 - Kill for a new spot, or `/r` to retry the same spot and flag. Every retry counts as a fail.
+- Every attempt starts like after a kill, also with `/r` and after captures: weapons and powerups from the last attempt are gone, only the weapons kept with `/shotgun` and the like stay.
 
 ## Commands
 
