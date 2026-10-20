@@ -1,6 +1,8 @@
 #ifndef GAME_SERVER_GAMEMODES_GTRAIN_ELO_H
 #define GAME_SERVER_GAMEMODES_GTRAIN_ELO_H
 
+#include <engine/shared/protocol.h>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -20,7 +22,8 @@ namespace GTrainElo
 	inline constexpr double EASY_TILES_PER_SECOND = 16;
 	inline constexpr double EXTREME_TILES_PER_SECOND = 8;
 	inline constexpr double MIN_SPEED_FACTOR = 0.5;
-	inline constexpr double MAX_SPEED_FACTOR = 2;
+	// Instant captures count as taking one tick.
+	inline constexpr double MIN_SECONDS = 1.0 / (double)SERVER_TICK_SPEED;
 	// Up to about this many points, ELO grows linearly with them, so single
 	// captures of hard maps don't make new players jump up.
 	inline constexpr double LINEAR_POINTS = 50'000'000;
@@ -34,17 +37,15 @@ namespace GTrainElo
 	}
 
 	// The maximum takes 1000 hours of Extreme 3 star captures at 8000 tiles
-	// per hour, all at the maximum speed factor. Good players managed about
-	// half that pace at a typical speed, so this is completely inhuman.
-	inline constexpr double MAX_POINTS = 1000.0 * 8000 * PointsPerTile(MAX_STEP) * MAX_SPEED_FACTOR;
+	// per hour, all twice as fast as typical. Good players managed about half
+	// that pace at a typical speed, so this is completely inhuman.
+	inline constexpr double MAX_POINTS = 1000.0 * 8000 * PointsPerTile(MAX_STEP) * 2;
 
 	// The capture's speed relative to the typical one of its difficulty.
 	inline double SpeedFactor(int Step, int Distance, double Seconds)
 	{
-		if(Seconds <= 0)
-			return MAX_SPEED_FACTOR;
 		const double Typical = EASY_TILES_PER_SECOND + (EXTREME_TILES_PER_SECOND - EASY_TILES_PER_SECOND) * Step / MAX_STEP;
-		return std::clamp(Distance / Seconds / Typical, MIN_SPEED_FACTOR, MAX_SPEED_FACTOR);
+		return std::max(Distance / std::max(Seconds, MIN_SECONDS) / Typical, MIN_SPEED_FACTOR);
 	}
 
 	inline int64_t CapturePoints(int Step, int Distance, double Seconds)

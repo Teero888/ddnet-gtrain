@@ -19,7 +19,7 @@ A server-side [DDNet](https://github.com/ddnet/ddnet) mod for training Gores map
 | Kill | New random spot and flag |
 | `/r`, `/retry` | Retry the current spot and flag (`/tc`, `/telecursor` and `/invincible` work too) |
 | `/fight <player>` | Join a player's fight; `/fight` alone leaves it |
-| `/distance <1-500>` | Your goal distance in tiles; `0` uses the server default |
+| `/distance <50-500>` | Your goal distance in tiles; `0` uses the server default |
 | `/nodj` | Toggle starting attempts without double jump; touching the ground gives it back |
 | `/scorelimit <0-1000>` | Points needed to win a fight (default 10, `0` for no limit) |
 | `/shotgun`, `/grenade`, `/laser`, `/ninja` | Toggle keeping that weapon in every attempt; ninja never runs out |
@@ -44,7 +44,7 @@ Every capture earns points, and your ELO shows them on a scale from 0 to 9999. B
   | Insane | 3844 | 5767 | 8650 |
   | Extreme | 12975 | 19462 | 29193 |
 
-- Fast captures earn up to twice that, slow ones down to half: the factor is your speed compared to a typical one, from 16 path tiles per second on Easy down to 8 on Extreme (measured from captures on the KoG maps). Only the time of the successful attempt counts.
+- That is multiplied by your speed compared to a typical one, from 16 path tiles per second on Easy down to 8 on Extreme (measured from captures on the KoG maps). Faster captures earn more without a limit, slow ones still earn at least half. Only the time of the successful attempt counts.
 - The distance is the goal's actual distance, which is shorter than the `/distance` setting when the finish line is closer.
 - ELO is logarithmic: it grows by about 760 every time your points double, so new players climb fast and harder maps keep raising it. A single capture barely counts on its own. Rough guide, at a typical speed:
 

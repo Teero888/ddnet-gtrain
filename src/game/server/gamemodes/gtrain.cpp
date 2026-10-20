@@ -882,16 +882,17 @@ void CGameControllerGTrain::Distance(int ClientId, std::optional<int> Tiles)
 	char aMessage[160];
 	if(!Tiles)
 	{
-		str_format(aMessage, sizeof(aMessage), "Goal distance: %d tiles%s. Use /distance 1-%d to change it, 0 for the server default.",
-			GoalDistance(Group), m_aSettings[Group].m_GoalDistance ? "" : " (server default)", (int)MAX_GOAL_DISTANCE);
+		str_format(aMessage, sizeof(aMessage), "Goal distance: %d tiles%s. Use /distance %d-%d to change it, 0 for the server default.",
+			GoalDistance(Group), m_aSettings[Group].m_GoalDistance ? "" : " (server default)", (int)MIN_GOAL_DISTANCE, (int)MAX_GOAL_DISTANCE);
 		GameServer()->SendChatTarget(ClientId, aMessage);
 		return;
 	}
 	if(!CheckFightLeader(ClientId, "change the goal distance"))
 		return;
-	if(*Tiles < 0 || *Tiles > MAX_GOAL_DISTANCE)
+	// Short goals mostly train the easy parts right after a start.
+	if(*Tiles != 0 && (*Tiles < MIN_GOAL_DISTANCE || *Tiles > MAX_GOAL_DISTANCE))
 	{
-		str_format(aMessage, sizeof(aMessage), "The goal distance must be between 1 and %d tiles, 0 for the server default.", (int)MAX_GOAL_DISTANCE);
+		str_format(aMessage, sizeof(aMessage), "The goal distance must be between %d and %d tiles, 0 for the server default.", (int)MIN_GOAL_DISTANCE, (int)MAX_GOAL_DISTANCE);
 		GameServer()->SendChatTarget(ClientId, aMessage);
 		return;
 	}
@@ -971,7 +972,7 @@ void CGameControllerGTrain::Help()
 	log_info("chatresp", "Kill: new position and flag");
 	log_info("chatresp", "/r or /retry: retry the current position and flag");
 	log_info("chatresp", "/fight <player>: join a player's fight, /fight alone leaves it");
-	log_info("chatresp", "/distance <1-%d>: goal distance in tiles, 0 for the server default", (int)MAX_GOAL_DISTANCE);
+	log_info("chatresp", "/distance <%d-%d>: goal distance in tiles, 0 for the server default", (int)MIN_GOAL_DISTANCE, (int)MAX_GOAL_DISTANCE);
 	log_info("chatresp", "/nodj: toggle starting attempts without double jump");
 	log_info("chatresp", "/scorelimit <0-%d>: points to win a fight, 0 for no limit", (int)MAX_SCORE_LIMIT);
 	log_info("chatresp", "/shotgun, /grenade, /laser, /ninja: toggle keeping that weapon");
@@ -979,7 +980,7 @@ void CGameControllerGTrain::Help()
 	log_info("chatresp", "In a fight, only the leader (*name*) changes these settings.");
 	log_info("chatresp", "/points or /elo [player]: show ELO, /top5points or /top5elo: the ELO ladder");
 	if(m_EloStep)
-		log_info("chatresp", "Captures here earn %.0f points per goal tile (%s %s), half to twice that by speed.", GTrainElo::PointsPerTile(*m_EloStep),
+		log_info("chatresp", "Captures here earn %.0f points per goal tile (%s %s), scaled by your speed (at least half).", GTrainElo::PointsPerTile(*m_EloStep),
 			s_apEloDifficulties[*m_EloStep / std::size(s_apEloStars)], s_apEloStars[*m_EloStep % std::size(s_apEloStars)]);
 	else
 		log_info("chatresp", "Captures on this map earn no ELO.");

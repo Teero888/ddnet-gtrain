@@ -2022,13 +2022,15 @@ TEST_F(GameWorld, GTrainCapturesEarnEloByDifficultySpeedAndGoalDistance)
 
 	// Instant captures are as fast as it gets.
 	pController->SetMapDifficulty("Hard", 2);
-	EXPECT_EQ(Help(), "Captures here earn 1709 points per goal tile (Hard ★★☆), half to twice that by speed.");
+	EXPECT_EQ(Help(), "Captures here earn 1709 points per goal tile (Hard ★★☆), scaled by your speed (at least half).");
 	int Tiles = GoalTiles(Runner);
 	ASSERT_GT(Tiles, 0);
 	EXPECT_NE(Capture(Runner).find("(0 fails, " + Gain(Runner, 7, Tiles, 0) + ")."), std::string::npos);
-	EXPECT_EQ(aPoints[Runner], std::llround(Tiles * GTrainElo::PointsPerTile(7) * 2));
-	// Longer goals earn more, retries don't change what a capture earns.
-	pController->Distance(Runner, 6);
+	// They take one tick, at Hard 2 star's typical speed of 12 tiles per second.
+	EXPECT_EQ(aPoints[Runner], std::llround(Tiles * GTrainElo::PointsPerTile(7) * (Tiles * SERVER_TICK_SPEED / 12.0)));
+	// Longer goals earn more, retries don't change what a capture earns. The
+	// corridor is too short for /distance, which takes at least 50 tiles.
+	g_Config.m_SvGtrainGoalDistance = 6;
 	// Starts close to the finish get shorter goals.
 	for(int Attempt = 0; Attempt < 100 && Tiles != 6; ++Attempt)
 	{
@@ -2308,39 +2310,45 @@ TEST_F(GameWorld, GTrainGoalDistanceIsPersonalAndSetByFightLeaders)
 		m_pServer->Console()->ExecuteLineFlag(pCommand, CFGFLAG_CHAT, ClientId);
 		return m_pServer->m_avChatMessages[ClientId].empty() ? std::string() : m_pServer->m_avChatMessages[ClientId].back();
 	};
+	// The corridor is shorter than the shortest /distance, but every spot has
+	// more than the server default of 3 tiles to one of its sides.
+	const auto LongGoal = [&](int ClientId) { return GoalDistance(ClientId) > 3.0f; };
 
-	EXPECT_EQ(Command(Anna, "distance"), "Goal distance: 3 tiles (server default). Use /distance 1-500 to change it, 0 for the server default.");
-	for(const char *pInvalid : {"distance 501", "distance -1"})
-		EXPECT_EQ(Command(Anna, pInvalid), "The goal distance must be between 1 and 500 tiles, 0 for the server default.");
+	EXPECT_EQ(Command(Anna, "distance"), "Goal distance: 3 tiles (server default). Use /distance 50-500 to change it, 0 for the server default.");
+	for(const char *pInvalid : {"distance 501", "distance 49", "distance 1", "distance -1"})
+		EXPECT_EQ(Command(Anna, pInvalid), "The goal distance must be between 50 and 500 tiles, 0 for the server default.") << pInvalid;
 
 	// Retries keep the current goal, new goals use the player's own distance.
 	const vec2 Goal = TrainingGoal(Anna);
-	EXPECT_EQ(Command(Anna, "distance 6"), "Goal distance set to 6 tiles for new goals.");
+	EXPECT_EQ(Command(Anna, "distance 50"), "Goal distance set to 50 tiles for new goals.");
 	EXPECT_TRUE(m_pServer->m_avChatMessages[Bob].empty() || m_pServer->m_avChatMessages[Bob].back().find("Goal distance") == std::string::npos);
 	m_pServer->Console()->ExecuteLineFlag("r", CFGFLAG_CHAT, Anna);
 	EXPECT_EQ(TrainingGoal(Anna), Goal);
 	NewAttempt(Anna);
-	EXPECT_FLOAT_EQ(GoalDistance(Anna), 6.0f);
+	EXPECT_TRUE(LongGoal(Anna));
 	NewAttempt(Bob);
 	EXPECT_FLOAT_EQ(GoalDistance(Bob), 3.0f);
-	EXPECT_EQ(Command(Anna, "distance"), "Goal distance: 6 tiles. Use /distance 1-500 to change it, 0 for the server default.");
+	EXPECT_EQ(Command(Anna, "distance"), "Goal distance: 50 tiles. Use /distance 50-500 to change it, 0 for the server default.");
 
 	// In a fight, the leader's distance applies to everyone.
 	pController->Fight(Bob, "Anna");
 	pController->Tick();
-	EXPECT_EQ(Command(Bob, "distance 4"), "Only the fight leader can change the goal distance.");
-	EXPECT_EQ(Command(Bob, "distance"), "Goal distance: 6 tiles. Use /distance 1-500 to change it, 0 for the server default.");
+	EXPECT_EQ(Command(Bob, "distance 60"), "Only the fight leader can change the goal distance.");
+	EXPECT_EQ(Command(Bob, "distance"), "Goal distance: 50 tiles. Use /distance 50-500 to change it, 0 for the server default.");
 	m_pServer->m_avChatMessages[Bob].clear();
-	EXPECT_EQ(Command(Anna, "distance 4"), "Goal distance set to 4 tiles for new goals.");
+	EXPECT_EQ(Command(Anna, "distance 500"), "Goal distance set to 500 tiles for new goals.");
 	ASSERT_FALSE(m_pServer->m_avChatMessages[Bob].empty());
-	EXPECT_EQ(m_pServer->m_avChatMessages[Bob].back(), "Goal distance set to 4 tiles for new goals.");
+	EXPECT_EQ(m_pServer->m_avChatMessages[Bob].back(), "Goal distance set to 500 tiles for new goals.");
 	NewAttempt(Anna);
 	for(int ClientId : vIds)
 	{
-		EXPECT_FLOAT_EQ(GoalDistance(ClientId), 4.0f);
+		EXPECT_TRUE(LongGoal(ClientId));
 		EXPECT_EQ(TrainingGoal(ClientId), TrainingGoal(Anna));
 	}
 	EXPECT_EQ(Command(Anna, "distance 0"), "Goal distance set to 3 tiles (server default) for new goals.");
+	NewAttempt(Anna);
+	for(int ClientId : vIds)
+		EXPECT_FLOAT_EQ(GoalDistance(ClientId), 3.0f);
 }
 
 TEST_F(GameWorld, GTrainNoDoubleJumpStartsAttemptsWithoutAirJump)

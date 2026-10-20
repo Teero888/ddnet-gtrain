@@ -23,17 +23,19 @@ TEST(GTrainElo, SpeedFactorFollowsTheTypicalSpeedOfTheDifficulty)
 	EXPECT_DOUBLE_EQ(SpeedFactor(MAX_STEP, 80, 10), 1);
 	EXPECT_DOUBLE_EQ(SpeedFactor(MAX_STEP, 120, 10), 1.5);
 	EXPECT_DOUBLE_EQ(SpeedFactor(MAX_STEP, 60, 10), 0.75);
-	// Very fast and very slow captures are limited, instant ones count as fast.
-	EXPECT_DOUBLE_EQ(SpeedFactor(MAX_STEP, 1000, 10), MAX_SPEED_FACTOR);
+	// Fast captures have no limit, slow ones earn at least half. Instant
+	// captures count as taking one tick.
+	EXPECT_DOUBLE_EQ(SpeedFactor(MAX_STEP, 1000, 10), 12.5);
 	EXPECT_DOUBLE_EQ(SpeedFactor(MAX_STEP, 1, 10), MIN_SPEED_FACTOR);
-	EXPECT_DOUBLE_EQ(SpeedFactor(MAX_STEP, 100, 0), MAX_SPEED_FACTOR);
+	EXPECT_DOUBLE_EQ(SpeedFactor(MAX_STEP, 100, 0), 100.0 * (double)SERVER_TICK_SPEED / 8);
+	EXPECT_DOUBLE_EQ(SpeedFactor(MAX_STEP, 100, 0), SpeedFactor(MAX_STEP, 100, 1.0 / (double)SERVER_TICK_SPEED));
 }
 
 TEST(GTrainElo, CapturePoints)
 {
 	EXPECT_EQ(CapturePoints(0, 100, 100 / 16.0), 10000);
 	EXPECT_EQ(CapturePoints(7, 100, 100 / 12.0), 170859); // 100 * 1.5^7 * 100, rounded
-	EXPECT_EQ(CapturePoints(MAX_STEP, 100, 0), std::llround(100 * PointsPerTile(MAX_STEP) * 2));
+	EXPECT_EQ(CapturePoints(MAX_STEP, 100, 100 / 32.0), std::llround(100 * PointsPerTile(MAX_STEP) * 4));
 	EXPECT_EQ(CapturePoints(MAX_STEP, 100, 100), std::llround(100 * PointsPerTile(MAX_STEP) / 2));
 }
 
@@ -41,7 +43,7 @@ TEST(GTrainElo, LogarithmicScaleUpToTheMaximum)
 {
 	EXPECT_EQ(FromPoints(0), 0);
 	// Single captures of hard maps barely count for new players.
-	EXPECT_LT(FromPoints(CapturePoints(MAX_STEP, 100, 0)), 150);
+	EXPECT_LT(FromPoints(CapturePoints(MAX_STEP, 100, 100 / EXTREME_TILES_PER_SECOND)), 150);
 	// Every doubling adds the same ELO once past the linear start.
 	const double Doubling = FromPoints(200'000'000'000) - FromPoints(100'000'000'000);
 	EXPECT_NEAR(FromPoints(400'000'000'000) - FromPoints(200'000'000'000), Doubling, 1);
