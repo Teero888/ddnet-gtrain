@@ -99,7 +99,7 @@ bool CGameControllerGTrain::AddSwitchLayer(IStorage *pStorage, const char *pPath
 // practice, and only clutter the chat's command completion.
 static const char *const s_apChatCommands[] = {
 	"help", "cmdlist", "info", "rules", "list",
-	"r", "retry", "fight", "distance", "nodj", "scorelimit", "freeplay",
+	"r", "retry", "fight", "distance", "nodj", "scorelimit", "freeplay", "settings",
 	// practice binds, they retry
 	"invincible", "tc", "telecursor", "rescue", "back", "tp", "teleport", "lasttp",
 	"shotgun", "grenade", "laser", "rifle", "ninja",
@@ -982,10 +982,11 @@ void CGameControllerGTrain::ScoreLimit(int ClientId, std::optional<int> Limit)
 	SendFightChat(Group, aMessage);
 }
 
+static const char *const s_apWeaponNames[NUM_WEAPONS] = {"hammer", "gun", "shotgun", "grenade", "laser", "ninja"};
+
 void CGameControllerGTrain::ToggleWeapon(int ClientId, int Weapon)
 {
-	static const char *const s_apNames[NUM_WEAPONS] = {"hammer", "gun", "shotgun", "grenade", "laser", "ninja"};
-	const char *pName = s_apNames[Weapon];
+	const char *pName = s_apWeaponNames[Weapon];
 	char aMessage[128];
 	str_format(aMessage, sizeof(aMessage), "toggle /%s", pName);
 	if(!GameServer()->m_apPlayers[ClientId] || !CheckFightLeader(ClientId, aMessage))
@@ -1006,6 +1007,54 @@ void CGameControllerGTrain::ToggleWeapon(int ClientId, int Weapon)
 	SendFightChat(ClientId, aMessage);
 }
 
+void CGameControllerGTrain::ShowSettings(int ClientId, const char *pName)
+{
+	int Target = ClientId;
+	if(pName[0])
+	{
+		Target = GameServer()->FindClientIdByName(pName).value_or(-1);
+		if(Target < 0 || !GameServer()->m_apPlayers[Target])
+		{
+			GameServer()->SendChatTarget(ClientId, "Player not found. Use their full name.");
+			return;
+		}
+	}
+	// Fight leaders choose the settings of everyone in their fight.
+	const int Group = m_aFightGroup[Target];
+	const CSettings &Settings = m_aSettings[Group];
+	char aWhose[128];
+	if(Target == ClientId)
+		str_copy(aWhose, "Your settings");
+	else
+		str_format(aWhose, sizeof(aWhose), "Settings of '%s'", Server()->ClientName(Target));
+	if(FightSize(Group) > 1)
+	{
+		char aLeader[64];
+		if(Group == Target)
+			str_copy(aLeader, " (fight leader)");
+		else
+			str_format(aLeader, sizeof(aLeader), " (from fight leader '%s')", Server()->ClientName(Group));
+		str_append(aWhose, aLeader);
+	}
+	char aWeapons[64] = "";
+	for(int Weapon = WEAPON_SHOTGUN; Weapon <= WEAPON_NINJA; ++Weapon)
+	{
+		if(!(Settings.m_Weapons & (1 << Weapon)))
+			continue;
+		if(aWeapons[0])
+			str_append(aWeapons, ", ");
+		str_append(aWeapons, s_apWeaponNames[Weapon]);
+	}
+	char aScoreLimit[16] = "off";
+	if(Settings.m_ScoreLimit > 0)
+		str_format(aScoreLimit, sizeof(aScoreLimit), "%d", Settings.m_ScoreLimit);
+	char aMessage[256];
+	str_format(aMessage, sizeof(aMessage), "%s: /distance %d%s, /nodj %s, /freeplay %s, /scorelimit %s, kept weapons: %s",
+		aWhose, GoalDistance(Group), Settings.m_GoalDistance ? "" : " (server default)", Settings.m_NoDoubleJump ? "on" : "off",
+		Settings.m_Freeplay ? "on" : "off", aScoreLimit, aWeapons[0] ? aWeapons : "none");
+	GameServer()->SendChatTarget(ClientId, aMessage);
+}
+
 void CGameControllerGTrain::Help()
 {
 	log_info("chatresp", "GTrain commands:");
@@ -1017,6 +1066,7 @@ void CGameControllerGTrain::Help()
 	log_info("chatresp", "/scorelimit <0-%d>: points to win a fight, 0 for no limit", (int)MAX_SCORE_LIMIT);
 	log_info("chatresp", "/shotgun, /grenade, /laser, /ninja: toggle keeping that weapon");
 	log_info("chatresp", "/freeplay: toggle training without flags and paths");
+	log_info("chatresp", "/settings [player]: show your settings, or another player's");
 	log_info("chatresp", "In a fight, only the leader (*name*) changes these settings.");
 	log_info("chatresp", "/points or /elo [player]: show ELO, /top5points or /top5elo: the ELO ladder");
 	log_info("chatresp", "/rank or /profile [player]: stats and playtime, /top5captures, /top5attempts, /top5respawns, /top5playtime: their ladders");

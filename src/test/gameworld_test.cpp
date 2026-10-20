@@ -2418,15 +2418,45 @@ TEST_F(GameWorld, GTrainChatOnlyHasGTrainCommands)
 	ASSERT_TRUE(IsChatCommand("solo"));
 	PrepareTrainingCorridor();
 	// Races, teams and practice have no use in GTrain.
-	for(const char *pName : {"team", "practice", "save", "load", "kill", "times", "settings", "swap", "solo", "weapons", "unlaser", "tpxy"})
+	for(const char *pName : {"team", "practice", "save", "load", "kill", "times", "swap", "solo", "weapons", "unlaser", "tpxy"})
 		EXPECT_FALSE(IsChatCommand(pName)) << pName;
-	for(const char *pName : {"r", "retry", "fight", "distance", "laser", "rifle", "top5", "rank", "profile", "top5playtime", "spec", "pause", "w", "help", "cmdlist", "map", "timeout"})
+	for(const char *pName : {"r", "retry", "fight", "distance", "settings", "laser", "rifle", "top5", "rank", "profile", "top5playtime", "spec", "pause", "w", "help", "cmdlist", "map", "timeout"})
 		EXPECT_TRUE(IsChatCommand(pName)) << pName;
 	// Practice binds stay, they retry.
 	for(const char *pName : {"invincible", "tc", "telecursor", "rescue", "back", "tp", "teleport", "lasttp"})
 		EXPECT_TRUE(IsChatCommand(pName)) << pName;
 	// Rcon keeps them.
 	EXPECT_NE(pConsole->GetCommandInfo("team", CFGFLAG_SERVER, false), nullptr);
+}
+
+TEST_F(GameWorld, GTrainSettingsShowsThoseOfPlayersAndFights)
+{
+	PrepareTrainingCorridor();
+	g_Config.m_SvSpamprotection = 0;
+	const auto vIds = SpawnTrainingPlayers({"Anna", "Bob", "Runner"});
+	const int Anna = vIds[0], Bob = vIds[1], Runner = vIds[2];
+	auto *pController = static_cast<CGameControllerGTrain *>(GameServer()->m_pController);
+	const auto Settings = [&](int ClientId, const char *pCommand) {
+		m_pServer->m_avChatMessages[ClientId].clear();
+		Say(ClientId, pCommand);
+		return m_pServer->m_avChatMessages[ClientId].empty() ? std::string() : m_pServer->m_avChatMessages[ClientId].back();
+	};
+
+	EXPECT_EQ(Settings(Anna, "/settings"), "Your settings: /distance 3 (server default), /nodj off, /freeplay off, /scorelimit 10, kept weapons: none");
+	for(const char *pCommand : {"/distance 120", "/nodj", "/ninja", "/shotgun", "/scorelimit 0"})
+		Say(Anna, pCommand);
+	const std::string AnnaSettings = "/distance 120, /nodj on, /freeplay off, /scorelimit off, kept weapons: shotgun, ninja";
+	EXPECT_EQ(Settings(Anna, "/settings"), "Your settings: " + AnnaSettings);
+	EXPECT_EQ(Settings(Runner, "/settings Anna"), "Settings of 'Anna': " + AnnaSettings);
+	EXPECT_EQ(Settings(Runner, "/settings Nobody"), "Player not found. Use their full name.");
+
+	// In a fight, the leader's settings apply to everyone.
+	pController->Fight(Bob, "Anna");
+	pController->Tick();
+	EXPECT_EQ(Settings(Bob, "/settings"), "Your settings (from fight leader 'Anna'): " + AnnaSettings);
+	EXPECT_EQ(Settings(Runner, "/settings Bob"), "Settings of 'Bob' (from fight leader 'Anna'): " + AnnaSettings);
+	EXPECT_EQ(Settings(Runner, "/settings *Anna*"), "Settings of 'Anna' (fight leader): " + AnnaSettings);
+	EXPECT_EQ(Settings(Anna, "/settings"), "Your settings (fight leader): " + AnnaSettings);
 }
 
 TEST_F(GameWorld, GTrainPracticeBindsRetry)
@@ -2730,15 +2760,15 @@ TEST_F(GameWorld, GTrainHelpListsOnlyGTrainCommands)
 	m_pServer->m_avChatMessages[Runner].clear();
 	Say(Runner, "/help");
 	const auto &vMessages = m_pServer->m_avChatMessages[Runner];
-	ASSERT_EQ(vMessages.size(), 13);
+	ASSERT_EQ(vMessages.size(), 14);
 	EXPECT_EQ(vMessages.front(), "GTrain commands:");
 	EXPECT_EQ(vMessages.back(), "Captures on this map earn no ELO.");
 	std::string Help;
 	for(const auto &Message : vMessages)
 		Help += Message + "\n";
-	for(const char *pCommand : {"Kill:", "/r ", "/retry", "/fight", "/distance", "/nodj", "/scorelimit", "/shotgun", "/grenade", "/laser", "/ninja", "/freeplay", "/points", "/elo", "/top5points", "/top5elo", "/rank", "/profile", "/top5captures", "/top5attempts", "/top5respawns", "/top5playtime"})
+	for(const char *pCommand : {"Kill:", "/r ", "/retry", "/fight", "/distance", "/nodj", "/scorelimit", "/shotgun", "/grenade", "/laser", "/ninja", "/freeplay", "/settings", "/points", "/elo", "/top5points", "/top5elo", "/rank", "/profile", "/top5captures", "/top5attempts", "/top5respawns", "/top5playtime"})
 		EXPECT_NE(Help.find(pCommand), std::string::npos) << pCommand;
-	for(const char *pOther : {"/cmdlist", "/practice", "/team", "/settings", "/rescue"})
+	for(const char *pOther : {"/cmdlist", "/practice", "/team", "/rescue"})
 		EXPECT_EQ(Help.find(pOther), std::string::npos) << pOther;
 
 	// Help for a single command still shows its usage.

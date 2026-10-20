@@ -88,6 +88,13 @@ void CGameContext::ConHelp(IConsole::IResult *pResult, void *pUserData)
 void CGameContext::ConSettings(IConsole::IResult *pResult, void *pUserData)
 {
 	CGameContext *pSelf = (CGameContext *)pUserData;
+	// GTrain shows the training settings of a player and their fight.
+	if(auto *pController = dynamic_cast<CGameControllerGTrain *>(pSelf->m_pController))
+	{
+		if(CheckClientId(pResult->m_ClientId) && pSelf->m_apPlayers[pResult->m_ClientId])
+			pController->ShowSettings(pResult->m_ClientId, pResult->NumArguments() > 0 ? pResult->GetString(0) : "");
+		return;
+	}
 
 	if(pResult->NumArguments() == 0)
 	{

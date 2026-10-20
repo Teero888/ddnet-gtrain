@@ -24,6 +24,7 @@ A server-side [DDNet](https://github.com/ddnet/ddnet) mod for training Gores map
 | `/scorelimit <0-1000>` | Points needed to win a fight (default 10, `0` for no limit) |
 | `/shotgun`, `/grenade`, `/laser`, `/ninja` | Toggle keeping that weapon in every attempt; ninja never runs out |
 | `/freeplay` | Toggle training without flags, paths and captures |
+| `/settings [player]` | Show your settings or another player's; in a fight, the leader's settings that apply to it |
 | `/points`, `/elo [player]` | Show your ELO and rank, or another player's |
 | `/top5`, `/top5points`, `/top5elo [rank]` | Show five players of the ELO ladder, starting at the rank (1 by default) |
 | `/rank`, `/profile [player]` | Show your [stats](#stats) and playtime, or another player's |

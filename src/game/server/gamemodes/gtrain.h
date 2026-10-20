@@ -162,6 +162,8 @@ public:
 	void NoDoubleJump(int ClientId);
 	void ScoreLimit(int ClientId, std::optional<int> Limit);
 	void ToggleWeapon(int ClientId, int Weapon);
+	// The settings of the player's group, pName empty for the player itself.
+	void ShowSettings(int ClientId, const char *pName);
 	void Help();
 
 	void Tick() override;
