@@ -100,6 +100,8 @@ bool CGameControllerGTrain::AddSwitchLayer(IStorage *pStorage, const char *pPath
 static const char *const s_apChatCommands[] = {
 	"help", "cmdlist", "info", "rules", "list",
 	"r", "retry", "fight", "distance", "nodj", "scorelimit", "freeplay",
+	// practice binds, they retry
+	"invincible", "tc", "telecursor", "rescue", "back", "tp", "teleport", "lasttp",
 	"shotgun", "grenade", "laser", "rifle", "ninja",
 	"points", "elo", "rank", "profile", "top", "top5", "top5points", "top5elo",
 	"top5captures", "top5attempts", "top5respawns", "top5playtime",

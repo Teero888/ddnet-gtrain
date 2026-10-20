@@ -1724,6 +1724,12 @@ void CGameContext::ConSetTimerType(IConsole::IResult *pResult, void *pUserData)
 
 void CGameContext::ConRescue(IConsole::IResult *pResult, void *pUserData)
 {
+	// Practice binds retry in GTrain, which has no practice mode.
+	if(dynamic_cast<CGameControllerGTrain *>(((CGameContext *)pUserData)->m_pController))
+	{
+		ConRetry(pResult, pUserData);
+		return;
+	}
 	CGameContext *pSelf = (CGameContext *)pUserData;
 	if(!CheckClientId(pResult->m_ClientId))
 		return;
@@ -1816,6 +1822,12 @@ void CGameContext::ConRescueMode(IConsole::IResult *pResult, void *pUserData)
 
 void CGameContext::ConBack(IConsole::IResult *pResult, void *pUserData)
 {
+	// Practice binds retry in GTrain, which has no practice mode.
+	if(dynamic_cast<CGameControllerGTrain *>(((CGameContext *)pUserData)->m_pController))
+	{
+		ConRetry(pResult, pUserData);
+		return;
+	}
 	auto *pSelf = static_cast<CGameContext *>(pUserData);
 	if(auto *pChr = pSelf->GetPracticeCharacter(pResult))
 	{
@@ -1833,6 +1845,12 @@ void CGameContext::ConBack(IConsole::IResult *pResult, void *pUserData)
 
 void CGameContext::ConTeleTo(IConsole::IResult *pResult, void *pUserData)
 {
+	// Practice binds retry in GTrain, which has no practice mode.
+	if(dynamic_cast<CGameControllerGTrain *>(((CGameContext *)pUserData)->m_pController))
+	{
+		ConRetry(pResult, pUserData);
+		return;
+	}
 	CGameContext *pSelf = (CGameContext *)pUserData;
 	if(!CheckClientId(pResult->m_ClientId))
 		return;
@@ -2000,6 +2018,12 @@ void CGameContext::ConTeleCursor(IConsole::IResult *pResult, void *pUserData)
 
 void CGameContext::ConLastTele(IConsole::IResult *pResult, void *pUserData)
 {
+	// Practice binds retry in GTrain, which has no practice mode.
+	if(dynamic_cast<CGameControllerGTrain *>(((CGameContext *)pUserData)->m_pController))
+	{
+		ConRetry(pResult, pUserData);
+		return;
+	}
 	CGameContext *pSelf = (CGameContext *)pUserData;
 	if(!CheckClientId(pResult->m_ClientId))
 		return;

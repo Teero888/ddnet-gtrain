@@ -2123,7 +2123,7 @@ TEST_F(GameWorld, GTrainCapturesEarnEloByDifficultySpeedAndGoalDistance)
 	// Half the typical speed of an Extreme map is slow.
 	pController->SetMapDifficulty("Extreme", 3);
 	Tiles = GoalTiles(Runner);
-	const int SlowTicks = (int)std::ceil(2 * Tiles / GTrainElo::EXTREME_TILES_PER_SECOND * SERVER_TICK_SPEED);
+	const int SlowTicks = (int)std::ceil(2 * Tiles / GTrainElo::EXTREME_TILES_PER_SECOND * (double)SERVER_TICK_SPEED);
 	const double SlowSeconds = SlowTicks / (double)SERVER_TICK_SPEED;
 	ASSERT_LT(GTrainElo::SpeedFactor(14, Tiles, SlowSeconds), 1);
 	char aSlow[64];
@@ -2415,15 +2415,36 @@ TEST_F(GameWorld, GTrainChatOnlyHasGTrainCommands)
 	IConsole *pConsole = m_pServer->Console();
 	const auto IsChatCommand = [&](const char *pName) { return pConsole->GetCommandInfo(pName, CFGFLAG_CHAT, false) != nullptr; };
 	ASSERT_TRUE(IsChatCommand("team"));
-	ASSERT_TRUE(IsChatCommand("invincible"));
+	ASSERT_TRUE(IsChatCommand("solo"));
 	PrepareTrainingCorridor();
 	// Races, teams and practice have no use in GTrain.
-	for(const char *pName : {"team", "practice", "save", "load", "invincible", "tc", "telecursor", "rescue", "kill", "times", "settings", "swap", "teleport", "solo", "weapons", "unlaser"})
+	for(const char *pName : {"team", "practice", "save", "load", "kill", "times", "settings", "swap", "solo", "weapons", "unlaser", "tpxy"})
 		EXPECT_FALSE(IsChatCommand(pName)) << pName;
 	for(const char *pName : {"r", "retry", "fight", "distance", "laser", "rifle", "top5", "rank", "profile", "top5playtime", "spec", "pause", "w", "help", "cmdlist", "map", "timeout"})
 		EXPECT_TRUE(IsChatCommand(pName)) << pName;
+	// Practice binds stay, they retry.
+	for(const char *pName : {"invincible", "tc", "telecursor", "rescue", "back", "tp", "teleport", "lasttp"})
+		EXPECT_TRUE(IsChatCommand(pName)) << pName;
 	// Rcon keeps them.
 	EXPECT_NE(pConsole->GetCommandInfo("team", CFGFLAG_SERVER, false), nullptr);
+}
+
+TEST_F(GameWorld, GTrainPracticeBindsRetry)
+{
+	PrepareTrainingCorridor();
+	g_Config.m_SvSpamprotection = 0;
+	const int Runner = SpawnTrainingPlayers({"Runner"})[0];
+	const vec2 Start = GameServer()->GetPlayerChar(Runner)->m_Pos;
+	const vec2 Goal = TrainingGoal(Runner);
+	for(const char *pCommand : {"/r", "/retry", "/tc", "/telecursor", "/invincible", "/rescue", "/back", "/tp", "/teleport Runner", "/lasttp"})
+	{
+		CCharacter *pChr = GameServer()->GetPlayerChar(Runner);
+		pChr->SetPosition(Start + vec2(64, 0));
+		pChr->m_Pos = Start + vec2(64, 0);
+		Say(Runner, pCommand);
+		EXPECT_EQ(GameServer()->GetPlayerChar(Runner)->m_Pos, Start) << pCommand;
+		EXPECT_EQ(TrainingGoal(Runner), Goal) << pCommand;
+	}
 }
 
 TEST_F(GameWorld, GTrainNeverPlacesOnUnfreezeTiles)

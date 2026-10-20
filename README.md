@@ -17,7 +17,7 @@ A server-side [DDNet](https://github.com/ddnet/ddnet) mod for training Gores map
 | Command | Description |
 | --- | --- |
 | Kill | New random spot and flag |
-| `/r`, `/retry` | Retry the current spot and flag |
+| `/r`, `/retry` | Retry the current spot and flag; practice binds like `/tc`, `/telecursor`, `/invincible`, `/rescue`, `/back`, `/tp`, `/teleport` and `/lasttp` do the same |
 | `/fight <player>` | Join a player's fight; `/fight` alone leaves it |
 | `/distance <50-500>` | Your goal distance in tiles; `0` uses the server default |
 | `/nodj` | Toggle starting attempts without double jump; touching the ground gives it back |
