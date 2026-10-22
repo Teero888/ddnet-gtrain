@@ -99,6 +99,7 @@ protected:
 	void FormatCreateSaves(char *aBuf, unsigned int BufferSize, bool Backup) const;
 	void FormatCreatePoints(char *aBuf, unsigned int BufferSize) const;
 	void FormatCreateGTrainStats(char *aBuf, unsigned int BufferSize) const;
+	void FormatCreateGTrainRuns(char *aBuf, unsigned int BufferSize, const char *pBlobType) const;
 };
 
 bool MysqlAvailable();

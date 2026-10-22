@@ -3170,6 +3170,8 @@ if(SERVER)
     gamemodes/gtrain_elo.h
     gamemodes/gtrain_path.cpp
     gamemodes/gtrain_path.h
+    gamemodes/gtrain_run.cpp
+    gamemodes/gtrain_run.h
     gamemodes/mod.cpp
     gamemodes/mod.h
     gameworld.cpp
@@ -3468,6 +3470,7 @@ if((GTEST_FOUND OR DOWNLOAD_GTEST) AND SERVER)
     git_revision_test.cpp
     gtrain_elo_test.cpp
     gtrain_path_test.cpp
+    gtrain_run_test.cpp
     hash_test.cpp
     huffman_test.cpp
     io_test.cpp

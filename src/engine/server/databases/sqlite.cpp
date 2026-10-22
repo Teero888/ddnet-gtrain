@@ -168,6 +168,9 @@ bool CSqliteConnection::ConnectImpl(char *pError, int ErrorSize)
 		FormatCreateGTrainStats(aBuf, sizeof(aBuf));
 		if(!Execute(aBuf, pError, ErrorSize))
 			return false;
+		FormatCreateGTrainRuns(aBuf, sizeof(aBuf), "BLOB");
+		if(!Execute(aBuf, pError, ErrorSize))
+			return false;
 
 		FormatCreateRace(aBuf, sizeof(aBuf), /* Backup */ true);
 		if(!Execute(aBuf, pError, ErrorSize))

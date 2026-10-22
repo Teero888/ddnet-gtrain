@@ -1,7 +1,9 @@
 #ifndef GAME_SERVER_SCOREWORKER_H
 #define GAME_SERVER_SCOREWORKER_H
 
+#include <base/hash.h>
 #include <base/str.h>
+#include <base/time.h>
 
 #include <engine/map.h>
 #include <engine/server/databases/connection_pool.h>
@@ -9,6 +11,7 @@
 #include <engine/shared/uuid_manager.h>
 
 #include <game/server/gamemodes/gtrain_elo.h>
+#include <game/server/gamemodes/gtrain_run.h>
 #include <game/server/save.h>
 #include <game/voting.h>
 
@@ -117,6 +120,23 @@ struct CSqlGTrainStatsData : ISqlData
 
 	char m_aName[MAX_NAME_LENGTH];
 	CGTrainStats m_Stats; // to add
+};
+
+struct CSqlGTrainRunData : ISqlData
+{
+	CSqlGTrainRunData() :
+		ISqlData(nullptr)
+	{
+	}
+
+	char m_aMap[MAX_MAP_LENGTH];
+	char m_aMapSha256[SHA256_MAXSTRSIZE];
+	char m_aName[MAX_NAME_LENGTH];
+	char m_aTimestamp[TIMESTAMP_STR_LENGTH];
+	char m_aGameUuid[UUID_MAXSTRSIZE];
+	char m_aRevision[64];
+	int m_Distance;
+	CGTrainRun m_Run;
 };
 
 struct CSqlPlayerRequest : ISqlData
@@ -369,6 +389,7 @@ struct CScoreWorker
 	static bool SaveScore(IDbConnection *pSqlServer, const ISqlData *pGameData, Write w, char *pError, int ErrorSize);
 	static bool SaveTeamScore(IDbConnection *pSqlServer, const ISqlData *pGameData, Write w, char *pError, int ErrorSize);
 	static bool AddGTrainStats(IDbConnection *pSqlServer, const ISqlData *pGameData, Write w, char *pError, int ErrorSize);
+	static bool SaveGTrainRun(IDbConnection *pSqlServer, const ISqlData *pGameData, Write w, char *pError, int ErrorSize);
 };
 
 #endif // GAME_SERVER_SCOREWORKER_H

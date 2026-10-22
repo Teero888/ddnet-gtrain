@@ -130,3 +130,26 @@ void IDbConnection::FormatCreateGTrainStats(char *aBuf, unsigned int BufferSize)
 		")",
 		GetPrefix(), MAX_NAME_LENGTH_SQL, BinaryCollate());
 }
+
+void IDbConnection::FormatCreateGTrainRuns(char *aBuf, unsigned int BufferSize, const char *pBlobType) const
+{
+	// Every GTrain capture made in control, as data that replays it. The
+	// map's hash and the server's git revision tell the map and physics it
+	// was made with. A run starts at a tick of its game, the server's map
+	// load, and lasts Ticks.
+	str_format(aBuf, BufferSize,
+		"CREATE TABLE IF NOT EXISTS %s_gtrain_runs ("
+		"  Map VARCHAR(128) COLLATE %s NOT NULL, "
+		"  MapSha256 CHAR(64) NOT NULL, "
+		"  Name VARCHAR(%d) COLLATE %s NOT NULL, "
+		"  Timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, "
+		"  GameId VARCHAR(64) NOT NULL, "
+		"  Revision VARCHAR(64) NOT NULL, "
+		"  StartTick INT NOT NULL, "
+		"  Ticks INT NOT NULL, "
+		"  Distance INT NOT NULL, "
+		"  Run %s NOT NULL, "
+		"  PRIMARY KEY (Map, GameId, StartTick, Name)"
+		")",
+		GetPrefix(), BinaryCollate(), MAX_NAME_LENGTH_SQL, BinaryCollate(), pBlobType);
+}

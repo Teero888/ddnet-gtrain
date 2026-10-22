@@ -52,6 +52,8 @@ struct Score : public testing::TestWithParam<IDbConnection *> // NOLINT(readabil
 		ASSERT_TRUE(m_pConn->ExecuteUpdate(&NumInserted, m_aError, sizeof(m_aError))) << m_aError;
 		ASSERT_TRUE(m_pConn->PrepareStatement("DELETE FROM record_gtrain_stats", m_aError, sizeof(m_aError))) << m_aError;
 		ASSERT_TRUE(m_pConn->ExecuteUpdate(&NumInserted, m_aError, sizeof(m_aError))) << m_aError;
+		ASSERT_TRUE(m_pConn->PrepareStatement("DELETE FROM record_gtrain_runs", m_aError, sizeof(m_aError))) << m_aError;
+		ASSERT_TRUE(m_pConn->ExecuteUpdate(&NumInserted, m_aError, sizeof(m_aError))) << m_aError;
 		ASSERT_TRUE(m_pConn->PrepareStatement("DELETE FROM record_saves", m_aError, sizeof(m_aError))) << m_aError;
 		ASSERT_TRUE(m_pConn->ExecuteUpdate(&NumInserted, m_aError, sizeof(m_aError))) << m_aError;
 	}
@@ -874,6 +876,82 @@ TEST_P(Elo, MapDifficulty)
 	EXPECT_EQ(pMissing->m_Stars, 0);
 }
 
+struct GTrainRuns : public Score // NOLINT(readability-identifier-naming)
+{
+	CSqlGTrainRunData m_Data;
+
+	GTrainRuns()
+	{
+		str_copy(m_Data.m_aMap, "Kobra 3");
+		str_copy(m_Data.m_aMapSha256, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef");
+		str_copy(m_Data.m_aName, "nameless tee");
+		str_copy(m_Data.m_aTimestamp, "2026-10-22 18:30:00");
+		str_copy(m_Data.m_aGameUuid, "a1b2c3d4-0000-4000-8000-000000000001");
+		str_copy(m_Data.m_aRevision, "144f35598d6b4ba9");
+		m_Data.m_Distance = 120;
+		m_Data.m_Run.m_Start.m_Tick = 5000;
+		m_Data.m_Run.m_Start.m_Pos = vec2(1616, 848);
+		m_Data.m_Run.m_vInputs.resize(3);
+		m_Data.m_Run.m_vInputs[1].m_Direction = 1;
+		m_Data.m_Run.m_EndPos = vec2(1700, 800);
+	}
+
+	void Save(Write w = Write::NORMAL)
+	{
+		ASSERT_TRUE(CScoreWorker::SaveGTrainRun(m_pConn, &m_Data, w, m_aError, sizeof(m_aError))) << m_aError;
+	}
+};
+
+TEST_P(GTrainRuns, StoredWithMapAndPlayer)
+{
+	Save();
+	// A second capture in the same second with the same length is a run too.
+	m_Data.m_Run.m_Start.m_Tick += SERVER_TICK_SPEED / 2;
+	Save();
+	ASSERT_TRUE(m_pConn->PrepareStatement("SELECT Map, MapSha256, Name, GameId, Revision, StartTick, Ticks, Distance, Run FROM record_gtrain_runs ORDER BY StartTick", m_aError, sizeof(m_aError))) << m_aError;
+	bool End;
+	ASSERT_TRUE(m_pConn->Step(&End, m_aError, sizeof(m_aError))) << m_aError;
+	ASSERT_FALSE(End);
+	char aMap[128], aSha256[65], aName[16], aGameId[64], aRevision[64];
+	m_pConn->GetString(1, aMap, sizeof(aMap));
+	m_pConn->GetString(2, aSha256, sizeof(aSha256));
+	m_pConn->GetString(3, aName, sizeof(aName));
+	m_pConn->GetString(4, aGameId, sizeof(aGameId));
+	m_pConn->GetString(5, aRevision, sizeof(aRevision));
+	EXPECT_STREQ(aMap, "Kobra 3");
+	EXPECT_STREQ(aSha256, m_Data.m_aMapSha256);
+	EXPECT_STREQ(aName, "nameless tee");
+	EXPECT_STREQ(aGameId, m_Data.m_aGameUuid);
+	EXPECT_STREQ(aRevision, "144f35598d6b4ba9");
+	EXPECT_EQ(m_pConn->GetInt(6), 5000);
+	EXPECT_EQ(m_pConn->GetInt(7), 3);
+	EXPECT_EQ(m_pConn->GetInt(8), 120);
+	std::vector<unsigned char> vRun(4096);
+	vRun.resize(m_pConn->GetBlob(9, vRun.data(), vRun.size()));
+	CGTrainRun Run;
+	ASSERT_TRUE(Run.Decode(vRun.data(), vRun.size()));
+	EXPECT_EQ(Run.m_Start.m_Tick, 5000);
+	EXPECT_EQ(Run.m_vInputs.size(), 3u);
+	EXPECT_EQ(Run.m_vInputs[1].m_Direction, 1);
+	ASSERT_TRUE(m_pConn->Step(&End, m_aError, sizeof(m_aError))) << m_aError;
+	ASSERT_FALSE(End);
+	EXPECT_EQ(m_pConn->GetInt(6), 5000 + SERVER_TICK_SPEED / 2);
+	ASSERT_TRUE(m_pConn->Step(&End, m_aError, sizeof(m_aError))) << m_aError;
+	EXPECT_TRUE(End);
+}
+
+TEST_P(GTrainRuns, OnlyTheMainDatabaseKeepsThem)
+{
+	Save(Write::BACKUP_FIRST);
+	Save(Write::NORMAL_SUCCEEDED);
+	Save(Write::NORMAL_FAILED);
+	ASSERT_TRUE(m_pConn->PrepareStatement("SELECT COUNT(*) FROM record_gtrain_runs", m_aError, sizeof(m_aError))) << m_aError;
+	bool End;
+	ASSERT_TRUE(m_pConn->Step(&End, m_aError, sizeof(m_aError))) << m_aError;
+	ASSERT_FALSE(End);
+	EXPECT_EQ(m_pConn->GetInt(1), 0);
+}
+
 struct RandomMap : public Score // NOLINT(readability-identifier-naming)
 {
 	std::shared_ptr<CScoreRandomMapResult> m_pRandomMapResult{std::make_shared<CScoreRandomMapResult>(0)};
@@ -986,4 +1064,5 @@ INSTANTIATE(MapInfo);
 INSTANTIATE(MapVote);
 INSTANTIATE(Points);
 INSTANTIATE(Elo);
+INSTANTIATE(GTrainRuns);
 INSTANTIATE(RandomMap);

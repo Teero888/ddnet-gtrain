@@ -4,6 +4,7 @@
 #include "ddnet.h"
 #include "gtrain_elo.h"
 #include "gtrain_path.h"
+#include "gtrain_run.h"
 
 #include <base/vmath.h>
 
@@ -64,6 +65,9 @@ class CGameControllerGTrain : public CGameControllerDDNet
 		std::vector<int> m_vRoute;
 		size_t m_RouteIndex = 0;
 		int m_RouteNode = -1;
+		// Recorded from the release on, to store the run if it captures in
+		// control.
+		std::optional<CGTrainRun> m_Run;
 	};
 	// Fight leaders choose these for their whole group. Leaving players and
 	// promoted leaders keep the group's settings.
@@ -137,6 +141,8 @@ class CGameControllerGTrain : public CGameControllerDDNet
 	std::optional<CEloGain> AwardElo(int ClientId, bool Frozen);
 	void AddStats(int ClientId, const CGTrainStats &Stats);
 	void EndAttempt(int ClientId, bool Captured);
+	void StartRun(class CCharacter *pChr);
+	void SaveRun(class CCharacter *pChr);
 	void SaveStats(int ClientId);
 	int PathNode(vec2 Pos) const;
 	void UpdatePath(class CCharacter *pChr);

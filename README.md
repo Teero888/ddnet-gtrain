@@ -10,7 +10,7 @@ A server-side [DDNet](https://github.com/ddnet/ddnet) mod for training Gores map
 - Reach the flag to capture it. The capture message shows how many fails it took, your time when training alone and the [ELO](#elo) you earned, then you get a new spot.
 - The race timer restarts with every attempt, so it always shows the time of your current try.
 - Kill for a new spot, or `/r` to retry the same spot and flag. Every retry counts as a fail.
-- Every attempt starts like after a kill, also with `/r` and after captures: weapons and powerups from the last attempt are gone, only the weapons kept with `/shotgun` and the like stay.
+- Every attempt starts like after a kill, also with `/r` and after captures: weapons, powerups and shots from the last attempt are gone, only the weapons kept with `/shotgun` and the like stay.
 
 ## Commands
 
@@ -124,5 +124,6 @@ The tool changes maps in place and skips maps that have a switch layer already. 
 | `sv_gtrain_hover_door` | 1 | Hold hovering tees with a laser door; 0 uses zero gravity, which high ping clients mispredict at the release |
 | `sv_gtrain_path_clear_radius` | 64 | Particle-free radius around the player in world units (32 per tile); 0 shows the whole path |
 | `sv_gtrain_path_particle_spacing` | 192 | Distance between path particles in world units |
+| `sv_gtrain_record_runs` | 0 | Store captures made without being frozen in the database, with the start state and inputs that replay them |
 | `sv_gtrain_start_exclusion` | 50 | Path distance in tiles from the start line in which no spots or flags are placed; maps entirely within it keep all their spots. Applies on map change |
 | `sv_require_chat_flag_to_chat` | 0 | Set to 1 so new players must show the chat bubble before chatting during their first 20 seconds; commands are unaffected (from [ddnet-insta](https://github.com/ddnet-insta/ddnet-insta/commit/9b7c415b19510dc04157dfaa05596c077ca02ec6)) |

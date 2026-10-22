@@ -31,6 +31,7 @@ class CCharacter : public CEntity
 	// need to use core
 	friend class CSaveTee;
 	friend class CSaveHotReloadTee;
+	friend class CGTrainRunState;
 
 public:
 	CCharacter(CGameWorld *pWorld, CNetObj_PlayerInput LastInput);

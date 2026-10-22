@@ -21,6 +21,7 @@
 #include <game/server/gamecontext.h>
 #include <game/server/gamemodes/ddnet.h>
 #include <game/team_state.h>
+#include <game/version.h>
 
 #include <memory>
 
@@ -301,6 +302,20 @@ void CScore::AddGTrainStats(const char *pName, const CGTrainStats &Stats)
 	str_copy(Tmp->m_aName, pName);
 	Tmp->m_Stats = Stats;
 	m_pPool->ExecuteWrite(CScoreWorker::AddGTrainStats, std::move(Tmp), "add gtrain stats");
+}
+
+void CScore::SaveGTrainRun(const char *pName, int Distance, CGTrainRun &&Run)
+{
+	auto Tmp = std::make_unique<CSqlGTrainRunData>();
+	str_copy(Tmp->m_aMap, GameServer()->Map()->BaseName());
+	sha256_str(GameServer()->Map()->Sha256(), Tmp->m_aMapSha256, sizeof(Tmp->m_aMapSha256));
+	str_copy(Tmp->m_aName, pName);
+	str_timestamp_format(Tmp->m_aTimestamp, sizeof(Tmp->m_aTimestamp), TimestampFormat::SPACE);
+	FormatUuid(GameServer()->GameUuid(), Tmp->m_aGameUuid, sizeof(Tmp->m_aGameUuid));
+	str_copy(Tmp->m_aRevision, GIT_SHORTREV_HASH ? GIT_SHORTREV_HASH : "");
+	Tmp->m_Distance = Distance;
+	Tmp->m_Run = std::move(Run);
+	m_pPool->ExecuteWrite(CScoreWorker::SaveGTrainRun, std::move(Tmp), "save gtrain run");
 }
 
 void CScore::ShowElo(int ClientId, const char *pName)

@@ -56,6 +56,16 @@ CGameControllerGTrain::CGameControllerGTrain(class CGameContext *pGameServer) :
 		std::fill(std::begin(Switcher.m_aStatus), std::end(Switcher.m_aStatus), false);
 	}
 
+	// Runs need the random teleport choices made for them.
+	GameServer()->m_World.m_Core.m_RandomHook = [this](int ClientId, int Value) {
+		if(ClientId >= 0 && ClientId < MAX_CLIENTS && m_aAttempts[ClientId].m_Run)
+		{
+			CGTrainRun &Run = *m_aAttempts[ClientId].m_Run;
+			Run.m_vRandom.push_back({Server()->Tick() - Run.m_Start.m_Tick, Value});
+		}
+		return Value;
+	};
+
 	HideUnrelatedChatCommands();
 	FindTrainPositions();
 	Teams().SetScoreboardTeams(m_aScoreboardTeams);
@@ -63,6 +73,7 @@ CGameControllerGTrain::CGameControllerGTrain(class CGameContext *pGameServer) :
 
 CGameControllerGTrain::~CGameControllerGTrain()
 {
+	GameServer()->m_World.m_Core.m_RandomHook = nullptr;
 	if(m_FlagSnapId)
 		Server()->SnapFreeId(*m_FlagSnapId);
 	for(auto SnapId : m_aDirectionSnapIds)
@@ -190,6 +201,7 @@ void CGameControllerGTrain::EndAttempt(int ClientId, bool Captured)
 	// Quick retries and skipped spots are no attempts, and rcon cheats would
 	// make anything trivial.
 	CAttempt &Attempt = m_aAttempts[ClientId];
+	Attempt.m_Run.reset();
 	if(!Attempt.m_Running)
 		return;
 	Attempt.m_Running = false;
@@ -201,6 +213,29 @@ void CGameControllerGTrain::EndAttempt(int ClientId, bool Captured)
 	Stats.m_Attempts = 1;
 	Stats.m_Captures = Captured;
 	AddStats(ClientId, Stats);
+}
+
+void CGameControllerGTrain::StartRun(CCharacter *pChr)
+{
+	// From the release on, only the player's inputs move the tee.
+	const int ClientId = pChr->GetPlayer()->GetCid();
+	CAttempt &Attempt = m_aAttempts[ClientId];
+	Attempt.m_Run.emplace();
+	Attempt.m_Run->m_Start.Save(pChr, m_DoorSwitch);
+	Attempt.m_Run->m_KeptWeapons = m_aSettings[m_aFightGroup[ClientId]].m_Weapons;
+	Attempt.m_Run->m_Goal = m_PathGraph.m_vNodes[Attempt.m_pGoal->m_Goal].m_Pos;
+}
+
+void CGameControllerGTrain::SaveRun(CCharacter *pChr)
+{
+	const int ClientId = pChr->GetPlayer()->GetCid();
+	CAttempt &Attempt = m_aAttempts[ClientId];
+	if(!Attempt.m_Run || !GameServer()->Score() || ((CConsole *)GameServer()->Console())->Cheated())
+		return;
+	Attempt.m_Run->m_EndPos = pChr->Core()->m_Pos;
+	Attempt.m_Run->m_EndVel = pChr->Core()->m_Vel;
+	GameServer()->Score()->SaveGTrainRun(Server()->ClientName(ClientId), Attempt.m_pGoal->m_Distance, std::move(*Attempt.m_Run));
+	Attempt.m_Run.reset();
 }
 
 std::optional<CGameControllerGTrain::CEloGain> CGameControllerGTrain::AwardElo(int ClientId, bool Frozen)
@@ -551,7 +586,9 @@ void CGameControllerGTrain::PlaceForAttempt(CPlayer *pPlayer, const std::shared_
 	// powerups picked up during the previous one. Characters that spawned
 	// for this placement are new already. The quiet death neither restarts
 	// the player's fight nor shows, and also deletes a dead character before
-	// its allocation pool slot is reused.
+	// its allocation pool slot is reused. Shots of the previous attempt are
+	// gone too, the new character would keep them flying.
+	GameServer()->m_World.RemoveEntitiesFromPlayer(ClientId);
 	CCharacter *pChr = pPlayer->GetCharacter();
 	if(!pChr || !m_aPendingPlace[ClientId])
 	{
@@ -698,11 +735,7 @@ void CGameControllerGTrain::SendFightChat(int Group, const char *pMessage)
 
 void CGameControllerGTrain::KeepWeapons(CCharacter *pChr)
 {
-	// Giving them every tick also keeps ninja from running out.
-	const int Weapons = m_aSettings[m_aFightGroup[pChr->GetPlayer()->GetCid()]].m_Weapons;
-	for(int Weapon = WEAPON_SHOTGUN; Weapon <= WEAPON_NINJA; ++Weapon)
-		if(Weapons & (1 << Weapon))
-			pChr->GiveWeapon(Weapon);
+	KeepGTrainWeapons(pChr, m_aSettings[m_aFightGroup[pChr->GetPlayer()->GetCid()]].m_Weapons);
 }
 
 int CGameControllerGTrain::SnapPlayerScore(int SnappingClient, CPlayer *pPlayer)
@@ -1282,6 +1315,8 @@ void CGameControllerGTrain::CheckGoal(CCharacter *pChr)
 	{
 		const int Group = m_aFightGroup[ClientId];
 		const bool Frozen = pChr->m_FreezeTime > 0 || pChr->Core()->m_DeepFrozen || pChr->Core()->m_LiveFrozen;
+		if(!Frozen)
+			SaveRun(pChr);
 		EndAttempt(ClientId, true);
 		const std::optional<CEloGain> Gain = AwardElo(ClientId, Frozen);
 		if(FightSize(Group) > 1)
@@ -1499,6 +1534,8 @@ void CGameControllerGTrain::Tick()
 	{
 		for(int ClientId = 0; ClientId < MAX_CLIENTS; ++ClientId)
 		{
+			// Replays have no pauses, so these runs are not stored.
+			m_aAttempts[ClientId].m_Run.reset();
 			if(m_aAttempts[ClientId].m_StartTick >= 0)
 				++m_aAttempts[ClientId].m_StartTick;
 			if(CCharacter *pChr = GameServer()->GetPlayerChar(ClientId))
@@ -1546,6 +1583,7 @@ void CGameControllerGTrain::Tick()
 		KeepWeapons(pChr);
 		if(pChr->IsPaused())
 		{
+			m_aAttempts[ClientId].m_Run.reset();
 			if(m_aAttempts[ClientId].m_StartTick >= 0)
 				++m_aAttempts[ClientId].m_StartTick;
 			DelayHoverDoor(pChr);
@@ -1566,6 +1604,16 @@ void CGameControllerGTrain::Tick()
 			continue;
 		}
 		CAttempt &Attempt = m_aAttempts[ClientId];
+		// The input the server applied in this tick. Replays have no pauses,
+		// in which tees keep their last input, nor weapons changing midway.
+		if(Attempt.m_Run)
+		{
+			if(pChr->GetPlayer()->IsPaused() || (int)Attempt.m_Run->m_vInputs.size() == CGTrainRun::MAX_TICKS ||
+				Attempt.m_Run->m_KeptWeapons != m_aSettings[m_aFightGroup[ClientId]].m_Weapons)
+				Attempt.m_Run.reset();
+			else
+				Attempt.m_Run->m_vInputs.push_back(GameServer()->GetLastPlayerInput(ClientId));
+		}
 
 		// Standing on the door gives the double jump back, /nodj takes it.
 		if(Attempt.m_StartTick < 0 && Attempt.m_DoorIndex >= 0 && m_aSettings[m_aFightGroup[ClientId]].m_NoDoubleJump)
@@ -1578,6 +1626,8 @@ void CGameControllerGTrain::Tick()
 			OpenHoverDoor(pChr);
 			Attempt.m_StartTick = Server()->Tick();
 			Attempt.m_Running = !m_aSettings[m_aFightGroup[ClientId]].m_Freeplay && Attempt.m_pGoal && Attempt.m_pGoal->m_Ready;
+			if(Attempt.m_Running && g_Config.m_SvGtrainRecordRuns)
+				StartRun(pChr);
 		}
 		if(m_aSettings[m_aFightGroup[ClientId]].m_Freeplay)
 			continue;

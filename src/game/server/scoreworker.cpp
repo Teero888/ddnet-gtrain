@@ -1820,6 +1820,41 @@ bool CScoreWorker::ShowGTrainTop(IDbConnection *pSqlServer, const ISqlData *pGam
 	return true;
 }
 
+bool CScoreWorker::SaveGTrainRun(IDbConnection *pSqlServer, const ISqlData *pGameData, Write w, char *pError, int ErrorSize)
+{
+	const auto *pData = dynamic_cast<const CSqlGTrainRunData *>(pGameData);
+
+	// Like the stats, runs only go to the main database.
+	if(w != Write::NORMAL)
+	{
+		return true;
+	}
+
+	// Compressing happens here, off the game thread.
+	std::vector<unsigned char> vRun = pData->m_Run.Encode();
+	char aBuf[512];
+	str_format(aBuf, sizeof(aBuf),
+		"%s INTO %s_gtrain_runs(Map, MapSha256, Name, Timestamp, GameId, Revision, StartTick, Ticks, Distance, Run) "
+		"VALUES (?, ?, ?, %s, ?, ?, ?, ?, ?, ?)",
+		pSqlServer->InsertIgnore(), pSqlServer->GetPrefix(), pSqlServer->InsertTimestampAsUtc());
+	if(!pSqlServer->PrepareStatement(aBuf, pError, ErrorSize))
+	{
+		return false;
+	}
+	pSqlServer->BindString(1, pData->m_aMap);
+	pSqlServer->BindString(2, pData->m_aMapSha256);
+	pSqlServer->BindString(3, pData->m_aName);
+	pSqlServer->BindString(4, pData->m_aTimestamp);
+	pSqlServer->BindString(5, pData->m_aGameUuid);
+	pSqlServer->BindString(6, pData->m_aRevision);
+	pSqlServer->BindInt(7, pData->m_Run.m_Start.m_Tick);
+	pSqlServer->BindInt(8, pData->m_Run.m_vInputs.size());
+	pSqlServer->BindInt(9, pData->m_Distance);
+	pSqlServer->BindBlob(10, vRun.data(), vRun.size());
+	int NumInserted;
+	return pSqlServer->ExecuteUpdate(&NumInserted, pError, ErrorSize);
+}
+
 bool CScoreWorker::AddGTrainStats(IDbConnection *pSqlServer, const ISqlData *pGameData, Write w, char *pError, int ErrorSize)
 {
 	const auto *pData = dynamic_cast<const CSqlGTrainStatsData *>(pGameData);
