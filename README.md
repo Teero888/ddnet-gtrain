@@ -23,7 +23,7 @@ A server-side [DDNet](https://github.com/ddnet/ddnet) mod for training Gores map
 | `/nodj` | Toggle starting attempts without double jump; touching the ground gives it back |
 | `/forwards` | Toggle goals that only lead towards the finish line, see [below](#forwards) |
 | `/scorelimit <0-1000>` | Points needed to win a fight (default 10, `0` for no limit) |
-| `/shotgun`, `/grenade`, `/laser` (or `/rifle`), `/ninja` | Toggle keeping that weapon in every attempt; ninja never runs out |
+| `/shotgun`, `/grenade`, `/laser` (or `/rifle`), `/ninja` | Toggle keeping that weapon in every attempt; ninja never runs out. Captures with kept weapons earn no [ELO](#elo) |
 | `/freeplay` | Toggle training without flags, paths and captures |
 | `/trail` | Toggle showing the particle trail to the flag; it is your own choice, also in fights and while spectating |
 | `/settings [player]` | Show your settings or another player's; in a fight, the leader's settings that apply to it |
@@ -70,6 +70,7 @@ Every capture earns points, and your ELO shows them on a scale from 0 to 9999. B
 - The category and stars come from the map's row in the `record_maps` table (`Server` and `Stars`). Maps of other categories, unrated maps and maps missing there earn no ELO. `/help` shows what the current map earns.
 - The capture message shows the ELO you gained and your speed factor, e.g. `(2 fails, +0.42 ELO, 1.3x speed)`.
 - Reaching the flag frozen still captures it and scores in fights, but earns no ELO: `(0 fails, +0 ELO (frozen))`.
+- Neither do attempts with kept weapons, also when the weapons were on for only part of the attempt: `(0 fails, +0 ELO (kept weapons))`. Weapons turned off again before the release don't count.
 - In a fight, only the player capturing the flag earns ELO. Freeplay never does, and neither does a server where rcon cheats were used.
 - Outside fights, the scoreboard and the server browser show each player's ELO as their score.
 
@@ -124,6 +125,6 @@ The tool changes maps in place and skips maps that have a switch layer already. 
 | `sv_gtrain_hover_door` | 1 | Hold hovering tees with a laser door; 0 uses zero gravity, which high ping clients mispredict at the release |
 | `sv_gtrain_path_clear_radius` | 64 | Particle-free radius around the player in world units (32 per tile); 0 shows the whole path |
 | `sv_gtrain_path_particle_spacing` | 192 | Distance between path particles in world units |
-| `sv_gtrain_record_runs` | 0 | Store captures made without being frozen in the database, with the start state and inputs that replay them |
+| `sv_gtrain_record_runs` | 0 | Store captures that earn ELO in the database, with the start state and inputs that replay them |
 | `sv_gtrain_start_exclusion` | 50 | Path distance in tiles from the start line in which no spots or flags are placed; maps entirely within it keep all their spots. Applies on map change |
 | `sv_require_chat_flag_to_chat` | 0 | Set to 1 so new players must show the chat bubble before chatting during their first 20 seconds; commands are unaffected (from [ddnet-insta](https://github.com/ddnet-insta/ddnet-insta/commit/9b7c415b19510dc04157dfaa05596c077ca02ec6)) |

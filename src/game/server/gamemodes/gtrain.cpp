@@ -217,12 +217,14 @@ void CGameControllerGTrain::EndAttempt(int ClientId, bool Captured)
 
 void CGameControllerGTrain::StartRun(CCharacter *pChr)
 {
-	// From the release on, only the player's inputs move the tee.
+	// From the release on, only the player's inputs move the tee. Kept
+	// weapons earn no ELO, so their runs are not stored.
 	const int ClientId = pChr->GetPlayer()->GetCid();
 	CAttempt &Attempt = m_aAttempts[ClientId];
+	if(Attempt.m_WithWeapons)
+		return;
 	Attempt.m_Run.emplace();
 	Attempt.m_Run->m_Start.Save(pChr, m_DoorSwitch);
-	Attempt.m_Run->m_KeptWeapons = m_aSettings[m_aFightGroup[ClientId]].m_Weapons;
 	Attempt.m_Run->m_Goal = m_PathGraph.m_vNodes[Attempt.m_pGoal->m_Goal].m_Pos;
 }
 
@@ -230,7 +232,7 @@ void CGameControllerGTrain::SaveRun(CCharacter *pChr)
 {
 	const int ClientId = pChr->GetPlayer()->GetCid();
 	CAttempt &Attempt = m_aAttempts[ClientId];
-	if(!Attempt.m_Run || !GameServer()->Score() || ((CConsole *)GameServer()->Console())->Cheated())
+	if(!Attempt.m_Run || !GameServer()->Score())
 		return;
 	Attempt.m_Run->m_EndPos = pChr->Core()->m_Pos;
 	Attempt.m_Run->m_EndVel = pChr->Core()->m_Vel;
@@ -245,9 +247,12 @@ std::optional<CGameControllerGTrain::CEloGain> CGameControllerGTrain::AwardElo(i
 	const int Distance = Attempt.m_pGoal->m_Distance;
 	if(!m_EloStep || Distance <= 0 || ((CConsole *)GameServer()->Console())->Cheated())
 		return std::nullopt;
-	// Frozen tees still capture, but only reaching the flag in control earns.
+	// Frozen tees still capture, but only reaching the flag in control earns,
+	// and only without the help of kept weapons.
 	if(Frozen)
-		return CEloGain{0.0, 0.0, true};
+		return CEloGain{0.0, 0.0, "frozen"};
+	if(Attempt.m_WithWeapons)
+		return CEloGain{0.0, 0.0, "kept weapons"};
 	const double Seconds = (Server()->Tick() - Attempt.m_StartTick) / (double)Server()->TickSpeed();
 	CGTrainStats Gain;
 	Gain.m_Points = GTrainElo::CapturePoints(*m_EloStep, Distance, Seconds);
@@ -259,14 +264,14 @@ std::optional<CGameControllerGTrain::CEloGain> CGameControllerGTrain::AwardElo(i
 void CGameControllerGTrain::FormatCaptureResult(char *pBuf, int BufSize, int Fails, const std::optional<CEloGain> &Gain)
 {
 	str_format(pBuf, BufSize, "%d fail%s", Fails, Fails == 1 ? "" : "s");
-	if(Gain && Gain->m_Frozen)
-		str_append(pBuf, ", +0 ELO (frozen)", BufSize);
-	else if(Gain)
-	{
-		char aElo[64];
+	if(!Gain)
+		return;
+	char aElo[64];
+	if(Gain->m_pNoElo)
+		str_format(aElo, sizeof(aElo), ", +0 ELO (%s)", Gain->m_pNoElo);
+	else
 		str_format(aElo, sizeof(aElo), ", +%.2f ELO, %.1fx speed", Gain->m_Elo, Gain->m_SpeedFactor);
-		str_append(pBuf, aElo, BufSize);
-	}
+	str_append(pBuf, aElo, BufSize);
 }
 
 void CGameControllerGTrain::FindTrainPositions()
@@ -608,6 +613,7 @@ void CGameControllerGTrain::PlaceForAttempt(CPlayer *pPlayer, const std::shared_
 	Attempt.m_Fails = SameSpot ? Attempt.m_Fails + 1 : 0;
 	if(!SameSpot)
 		Attempt.m_SpotTried = false;
+	Attempt.m_WithWeapons = false;
 	Attempt.m_pGoal = pGoal;
 	Attempt.m_Start = Start;
 	Attempt.m_TargetDistance = TargetDistance;
@@ -1315,10 +1321,11 @@ void CGameControllerGTrain::CheckGoal(CCharacter *pChr)
 	{
 		const int Group = m_aFightGroup[ClientId];
 		const bool Frozen = pChr->m_FreezeTime > 0 || pChr->Core()->m_DeepFrozen || pChr->Core()->m_LiveFrozen;
-		if(!Frozen)
+		const std::optional<CEloGain> Gain = AwardElo(ClientId, Frozen);
+		// The runs stored are those of rated play.
+		if(Gain && !Gain->m_pNoElo)
 			SaveRun(pChr);
 		EndAttempt(ClientId, true);
-		const std::optional<CEloGain> Gain = AwardElo(ClientId, Frozen);
 		if(FightSize(Group) > 1)
 		{
 			AnnounceFightScore(ClientId, Gain);
@@ -1626,9 +1633,12 @@ void CGameControllerGTrain::Tick()
 			OpenHoverDoor(pChr);
 			Attempt.m_StartTick = Server()->Tick();
 			Attempt.m_Running = !m_aSettings[m_aFightGroup[ClientId]].m_Freeplay && Attempt.m_pGoal && Attempt.m_pGoal->m_Ready;
+			Attempt.m_WithWeapons = m_aSettings[m_aFightGroup[ClientId]].m_Weapons != 0;
 			if(Attempt.m_Running && g_Config.m_SvGtrainRecordRuns)
 				StartRun(pChr);
 		}
+		else if(Attempt.m_StartTick >= 0 && m_aSettings[m_aFightGroup[ClientId]].m_Weapons)
+			Attempt.m_WithWeapons = true;
 		if(m_aSettings[m_aFightGroup[ClientId]].m_Freeplay)
 			continue;
 		UpdatePath(pChr);

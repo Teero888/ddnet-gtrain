@@ -62,11 +62,14 @@ class CGameControllerGTrain : public CGameControllerDDNet
 		// An attempt at this start and goal counted, so giving it up by
 		// dying is a respawn.
 		bool m_SpotTried = false;
+		// Kept weapons were on since the release, so a capture earns no ELO,
+		// also once they are gone again.
+		bool m_WithWeapons = false;
 		std::vector<int> m_vRoute;
 		size_t m_RouteIndex = 0;
 		int m_RouteNode = -1;
-		// Recorded from the release on, to store the run if it captures in
-		// control.
+		// Recorded from the release on, to store the run if its capture earns
+		// ELO.
 		std::optional<CGTrainRun> m_Run;
 	};
 	// Fight leaders choose these for their whole group. Leaving players and
@@ -133,8 +136,8 @@ class CGameControllerGTrain : public CGameControllerDDNet
 	{
 		double m_Elo;
 		double m_SpeedFactor;
-		// captured while frozen, which earns nothing
-		bool m_Frozen = false;
+		// why the capture earns nothing, like being frozen
+		const char *m_pNoElo = nullptr;
 	};
 	static void FormatCaptureResult(char *pBuf, int BufSize, int Fails, const std::optional<CEloGain> &Gain);
 	void AnnounceFightScore(int Winner, const std::optional<CEloGain> &Gain);

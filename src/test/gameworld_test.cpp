@@ -2261,6 +2261,26 @@ TEST_F(GameWorld, GTrainCapturesEarnEloByDifficultySpeedAndGoalDistance)
 	EXPECT_EQ(pController->Stats(Runner).m_Captures, Captures + 1);
 	EXPECT_EQ(pController->Stats(Runner).m_Points, aPoints[Runner]);
 
+	// Kept weapons earn nothing either, also when they are gone again before
+	// the capture.
+	const auto Command = [&](const char *pCommand) { m_pServer->Console()->ExecuteLineFlag(pCommand, CFGFLAG_CHAT, Runner); };
+	Command("ninja");
+	EXPECT_NE(Capture(Runner).find("(0 fails, +0 ELO (kept weapons))."), std::string::npos);
+	Command("ninja");
+	GameServer()->GetPlayerChar(Runner)->Unfreeze();
+	pController->Tick();
+	Command("grenade");
+	pController->Tick();
+	Command("grenade");
+	EXPECT_NE(Capture(Runner).find("(0 fails, +0 ELO (kept weapons))."), std::string::npos);
+	EXPECT_EQ(pController->Stats(Runner).m_Captures, Captures + 3);
+	EXPECT_EQ(pController->Stats(Runner).m_Points, aPoints[Runner]);
+	// Weapons kept while hovering only, then given up, don't count.
+	Command("laser");
+	Command("laser");
+	Tiles = GoalTiles(Runner);
+	EXPECT_NE(Capture(Runner).find("(0 fails, " + Gain(Runner, 7, Tiles, 0) + ")."), std::string::npos);
+
 	// Half the typical speed of an Extreme map is slow.
 	pController->SetMapDifficulty("Extreme", 3);
 	Tiles = GoalTiles(Runner);
@@ -3086,6 +3106,8 @@ TEST_F(GameWorld, GTrainCapturesReplayExactly)
 	PrepareTrainingCorridor();
 	ClearMapExtras();
 	PrepareTrainingShaft(GameServer());
+	// Only captures that earn ELO are stored.
+	static_cast<CGameControllerGTrain *>(GameServer()->m_pController)->SetMapDifficulty("Main", 1);
 	g_Config.m_SvGtrainHoverDoor = 1;
 	m_pServer->AdvanceTicks(10);
 	const int Runner = SpawnTrainingPlayers({"Runner"})[0];
@@ -3099,11 +3121,18 @@ TEST_F(GameWorld, GTrainCapturesReplayExactly)
 		return Result;
 	};
 
+	// What the capturing attempt did: the state at the release and after
+	// every tick before the capture, the input of every tick after the
+	// release.
+	struct CLive
+	{
+		std::vector<CGTrainRunState> m_vStates;
+		std::vector<CNetObj_PlayerInput> m_vInputs;
+	};
+
 	// Plays attempts until one captures: keys held through the hover, firing
 	// the weapon chosen for the release, then up the hook or down the shaft,
-	// switching weapons and firing them at the walls. Returns the state at
-	// the release and after every tick of the capturing attempt before its
-	// capture.
+	// switching weapons and firing them at the walls.
 	CNetObj_PlayerInput Input = {};
 	int Scrolls = 0;
 	const auto Play = [&](std::optional<int> ReleaseWeapon) {
@@ -3111,7 +3140,7 @@ TEST_F(GameWorld, GTrainCapturesReplayExactly)
 		auto *pController = static_cast<CGameControllerGTrain *>(GameServer()->m_pController);
 		for(int Attempt = 0; Attempt < 20; ++Attempt)
 		{
-			std::vector<CGTrainRunState> vStates;
+			CLive Live;
 			Input = {};
 			for(int i = 0; i < 100 && GameServer()->GetPlayerChar(Runner)->m_FreezeTime > 0; ++i)
 			{
@@ -3128,7 +3157,7 @@ TEST_F(GameWorld, GTrainCapturesReplayExactly)
 					Input.m_WantedWeapon = *ReleaseWeapon + 1;
 				TickWithInput(Runner, Input);
 			}
-			vStates.push_back(State(GameServer()->GetPlayerChar(Runner)));
+			Live.m_vStates.push_back(State(GameServer()->GetPlayerChar(Runner)));
 			const vec2 Goal = TrainingGoal(Runner);
 			const int Captures = pController->Stats(Runner).m_Captures;
 			for(int Tick = 0; Tick < 300; ++Tick)
@@ -3150,9 +3179,10 @@ TEST_F(GameWorld, GTrainCapturesReplayExactly)
 				if(Tick % 15 == 14)
 					Input.m_WantedWeapon = 1 + (Tick / 15) % NUM_WEAPONS;
 				TickWithInput(Runner, Input);
+				Live.m_vInputs.push_back(Input);
 				if(pController->Stats(Runner).m_Captures > Captures)
-					return vStates;
-				vStates.push_back(State(GameServer()->GetPlayerChar(Runner)));
+					return Live;
+				Live.m_vStates.push_back(State(GameServer()->GetPlayerChar(Runner)));
 			}
 			// A spot this bot cannot do, on to another.
 			GameServer()->m_apPlayers[Runner]->KillCharacter(WEAPON_SELF);
@@ -3160,40 +3190,21 @@ TEST_F(GameWorld, GTrainCapturesReplayExactly)
 			TickWithInput(Runner, CNetObj_PlayerInput{});
 		}
 		ADD_FAILURE() << "The runner did not capture the flag";
-		return std::vector<CGTrainRunState>();
+		return CLive();
 	};
 
-	// Held by a door, keeping the grenade, laser and shotgun. The release
-	// fires a grenade, in flight when the run starts.
-	std::vector<std::vector<CGTrainRunState>> vLiveStates;
-	Command("grenade");
-	Command("laser");
-	Command("shotgun");
-	Command("r");
-	vLiveStates.push_back(Play(WEAPON_GRENADE));
-	// Hovering in zero gravity without double jump, keeping ninja, which
-	// dashes at the release.
+	// Held by a door. The release fires the gun, its bullet is in flight
+	// when the run starts.
+	std::vector<CLive> vRated;
+	vRated.push_back(Play(WEAPON_GUN));
+	// Hovering in zero gravity without double jump, holding nothing.
 	g_Config.m_SvGtrainHoverDoor = 0;
-	Command("grenade");
-	Command("laser");
-	Command("shotgun");
-	Command("ninja");
 	Command("nodj");
 	Command("r");
-	vLiveStates.push_back(Play(WEAPON_NINJA));
-	// Nothing kept or held.
-	g_Config.m_SvGtrainHoverDoor = 1;
-	Command("ninja");
-	Command("nodj");
-	Command("r");
-	vLiveStates.push_back(Play(std::nullopt));
-	// A shotgun laser in flight at the release.
-	Command("shotgun");
-	Command("r");
-	vLiveStates.push_back(Play(WEAPON_SHOTGUN));
+	vRated.push_back(Play(std::nullopt));
 
 	const std::vector<CStoredRun> vStored = StoredRuns(aDatabase);
-	ASSERT_EQ(vStored.size(), vLiveStates.size());
+	ASSERT_EQ(vStored.size(), vRated.size());
 	char aSha256[SHA256_MAXSTRSIZE];
 	sha256_str(GameServer()->Map()->Sha256(), aSha256, sizeof(aSha256));
 	for(const CStoredRun &Stored : vStored)
@@ -3203,17 +3214,64 @@ TEST_F(GameWorld, GTrainCapturesReplayExactly)
 		EXPECT_EQ(Stored.m_Name, "Runner");
 		EXPECT_EQ(Stored.m_Ticks, (int)Stored.m_Run.m_vInputs.size());
 		EXPECT_GT(Stored.m_Distance, 0);
+		EXPECT_EQ(Stored.m_Run.m_KeptWeapons, 0);
 	}
-	EXPECT_EQ(vStored[0].m_Run.m_KeptWeapons, (1 << WEAPON_SHOTGUN) | (1 << WEAPON_GRENADE) | (1 << WEAPON_LASER));
 	ASSERT_EQ(vStored[0].m_Run.m_Start.m_vShots.size(), 1u);
 	EXPECT_FALSE(vStored[0].m_Run.m_Start.m_vShots[0].m_Laser);
-	EXPECT_EQ(vStored[1].m_Run.m_KeptWeapons, 1 << WEAPON_NINJA);
 	EXPECT_EQ(vStored[1].m_Run.m_Start.m_Jumped & 2, 2);
-	EXPECT_GT(vStored[1].m_Run.m_Start.m_NinjaCurrentMoveTime, 0);
-	EXPECT_EQ(vStored[2].m_Run.m_KeptWeapons, 0);
-	EXPECT_TRUE(vStored[2].m_Run.m_Start.m_vShots.empty());
-	ASSERT_EQ(vStored[3].m_Run.m_Start.m_vShots.size(), 1u);
-	EXPECT_TRUE(vStored[3].m_Run.m_Start.m_vShots[0].m_Laser);
+	EXPECT_TRUE(vStored[1].m_Run.m_Start.m_vShots.empty());
+
+	// Kept weapons earn no ELO, so their runs are not stored, but replays
+	// handle them all the same. These runs leave out the capture tick, whose
+	// end the test does not see.
+	std::vector<std::pair<CLive, int>> vWithWeapons;
+	// Held by a door, keeping the grenade, laser and shotgun. The release
+	// fires a grenade.
+	g_Config.m_SvGtrainHoverDoor = 1;
+	Command("nodj");
+	Command("grenade");
+	Command("laser");
+	Command("shotgun");
+	Command("r");
+	vWithWeapons.emplace_back(Play(WEAPON_GRENADE), (1 << WEAPON_SHOTGUN) | (1 << WEAPON_GRENADE) | (1 << WEAPON_LASER));
+	// Hovering in zero gravity without double jump, keeping ninja, which
+	// dashes at the release.
+	g_Config.m_SvGtrainHoverDoor = 0;
+	Command("grenade");
+	Command("laser");
+	Command("shotgun");
+	Command("ninja");
+	Command("nodj");
+	Command("r");
+	vWithWeapons.emplace_back(Play(WEAPON_NINJA), 1 << WEAPON_NINJA);
+	// A shotgun laser in flight at the release.
+	g_Config.m_SvGtrainHoverDoor = 1;
+	Command("ninja");
+	Command("nodj");
+	Command("shotgun");
+	Command("r");
+	vWithWeapons.emplace_back(Play(WEAPON_SHOTGUN), 1 << WEAPON_SHOTGUN);
+	EXPECT_EQ(StoredRuns(aDatabase).size(), vStored.size());
+
+	std::vector<std::pair<CGTrainRun, CLive>> vReplays;
+	for(size_t i = 0; i < vStored.size(); ++i)
+		vReplays.emplace_back(vStored[i].m_Run, vRated[i]);
+	for(const auto &[Live, KeptWeapons] : vWithWeapons)
+	{
+		CGTrainRun Run;
+		Run.m_Start = Live.m_vStates.front();
+		Run.m_KeptWeapons = KeptWeapons;
+		Run.m_vInputs.assign(Live.m_vInputs.begin(), Live.m_vInputs.end() - 1);
+		Run.m_EndPos = Live.m_vStates.back().m_Pos;
+		Run.m_EndVel = Live.m_vStates.back().m_Vel;
+		vReplays.emplace_back(Run, Live);
+	}
+	ASSERT_EQ(vReplays[2].first.m_Start.m_vShots.size(), 1u);
+	EXPECT_FALSE(vReplays[2].first.m_Start.m_vShots[0].m_Laser);
+	EXPECT_EQ(vReplays[3].first.m_Start.m_Jumped & 2, 2);
+	EXPECT_GT(vReplays[3].first.m_Start.m_NinjaCurrentMoveTime, 0);
+	ASSERT_EQ(vReplays[4].first.m_Start.m_vShots.size(), 1u);
+	EXPECT_TRUE(vReplays[4].first.m_Start.m_vShots[0].m_Laser);
 
 	// Replays need a world GTrain does not control, without the lasers still
 	// bouncing. They start at the same ticks as the runs did.
@@ -3226,24 +3284,30 @@ TEST_F(GameWorld, GTrainCapturesReplayExactly)
 		GameServer()->OnTick();
 	}
 	// Every tick ends in the same state, not just at the same position.
-	for(size_t i = 0; i < vStored.size(); ++i)
+	for(size_t i = 0; i < vReplays.size(); ++i)
 	{
-		const CGTrainRun &Run = vStored[i].m_Run;
-		const std::vector<CGTrainRunState> &vLive = vLiveStates[i];
+		const auto &[Run, Live] = vReplays[i];
+		const std::vector<CGTrainRunState> &vLive = Live.m_vStates;
 		EXPECT_TRUE(Run.m_Start == vLive[0]) << "run " << i;
 		m_pServer->AdvanceTicks(Run.m_Start.m_Tick - m_pServer->Tick());
 		std::vector<CGTrainRunState> vReplayed;
 		EXPECT_TRUE(ReplayGTrainRun(GameServer(), Runner, Run, [&]() { m_pServer->AdvanceTicks(1); }, [&](CCharacter *pChr) { vReplayed.push_back(State(pChr)); })) << "run " << i;
-		// Replays have the capture tick too, but not the release.
-		ASSERT_EQ(vReplayed.size(), vLive.size()) << "run " << i;
+		// Replays leave out the release, stored ones end with the capture.
+		ASSERT_EQ(vReplayed.size(), Run.m_vInputs.size()) << "run " << i;
+		ASSERT_GE(vReplayed.size() + 1, vLive.size()) << "run " << i;
 		for(size_t Tick = 1; Tick < vLive.size(); ++Tick)
 			ASSERT_TRUE(vReplayed[Tick - 1] == vLive[Tick]) << "run " << i << ", tick " << Tick << ": " << vReplayed[Tick - 1].m_Pos.x << "," << vReplayed[Tick - 1].m_Pos.y << " instead of " << vLive[Tick].m_Pos.x << "," << vLive[Tick].m_Pos.y;
 		EXPECT_EQ(vReplayed.back().m_Pos, Run.m_EndPos);
-		EXPECT_LT(distance(Run.m_EndPos, Run.m_Goal), 42.0f + distance(Run.m_EndPos, vLive.back().m_Pos));
+	}
+	// Stored runs end where their last tick reached the flag.
+	for(size_t i = 0; i < vStored.size(); ++i)
+	{
+		const CGTrainRun &Run = vStored[i].m_Run;
+		EXPECT_LT(distance(Run.m_EndPos, Run.m_Goal), 42.0f + distance(Run.m_EndPos, vRated[i].m_vStates.back().m_Pos)) << "run " << i;
 	}
 }
 
-TEST_F(GameWorld, GTrainStoresOnlyCapturesInControl)
+TEST_F(GameWorld, GTrainStoresOnlyCapturesThatEarnElo)
 {
 	char aDatabase[IO_MAX_PATH_LENGTH];
 	UseTestDatabase("r.db", aDatabase, sizeof(aDatabase));
@@ -3252,6 +3316,8 @@ TEST_F(GameWorld, GTrainStoresOnlyCapturesInControl)
 	PrepareTrainingCorridor();
 	ClearMapExtras();
 	const int Runner = SpawnTrainingPlayers({"Runner"})[0];
+	auto *pController = static_cast<CGameControllerGTrain *>(GameServer()->m_pController);
+	const auto Command = [&](const char *pCommand) { m_pServer->Console()->ExecuteLineFlag(pCommand, CFGFLAG_CHAT, Runner); };
 	const auto Release = [&]() {
 		for(int i = 0; i < 100 && GameServer()->GetPlayerChar(Runner)->m_FreezeTime > 0; ++i)
 			TickWithInput(Runner, CNetObj_PlayerInput{});
@@ -3263,27 +3329,38 @@ TEST_F(GameWorld, GTrainStoresOnlyCapturesInControl)
 			pChr->Freeze();
 		pChr->m_Pos = pChr->m_PrevPos = TrainingGoal(Runner);
 		pChr->SetPosition(pChr->m_Pos);
-		GameServer()->m_pController->Tick();
+		pController->Tick();
 	};
 
+	// Maps without ELO store nothing.
+	Release();
+	Capture(false);
+	EXPECT_EQ(StoredRuns(aDatabase).size(), 0u);
+	pController->SetMapDifficulty("Main", 1);
 	Release();
 	Capture(false);
 	EXPECT_EQ(StoredRuns(aDatabase).size(), 1u);
-	// Frozen captures earn nothing and are not stored.
+	// Neither do frozen captures.
 	Release();
 	Capture(true);
+	EXPECT_EQ(StoredRuns(aDatabase).size(), 1u);
+	// Nor those with kept weapons, also when they were on only midway.
+	Command("grenade");
+	Release();
+	Capture(false);
+	EXPECT_EQ(StoredRuns(aDatabase).size(), 1u);
+	Command("grenade");
+	Release();
+	Command("grenade");
+	TickWithInput(Runner, CNetObj_PlayerInput{});
+	Command("grenade");
+	Capture(false);
 	EXPECT_EQ(StoredRuns(aDatabase).size(), 1u);
 	// Pauses cannot be replayed.
 	Release();
 	ASSERT_EQ(GameServer()->m_apPlayers[Runner]->Pause(CPlayer::PAUSE_PAUSED, true), CPlayer::PAUSE_PAUSED);
 	TickWithInput(Runner, CNetObj_PlayerInput{});
 	ASSERT_EQ(GameServer()->m_apPlayers[Runner]->Pause(CPlayer::PAUSE_NONE, true), CPlayer::PAUSE_NONE);
-	TickWithInput(Runner, CNetObj_PlayerInput{});
-	Capture(false);
-	EXPECT_EQ(StoredRuns(aDatabase).size(), 1u);
-	// Neither can kept weapons changing midway.
-	Release();
-	m_pServer->Console()->ExecuteLineFlag("grenade", CFGFLAG_CHAT, Runner);
 	TickWithInput(Runner, CNetObj_PlayerInput{});
 	Capture(false);
 	EXPECT_EQ(StoredRuns(aDatabase).size(), 1u);
