@@ -97,7 +97,7 @@ Freeplay has no attempts, and rcon cheats stop everything but the playtime from 
 
 ## Pathfinding
 
-The walkable tile graph is built once when the map loads. Paths never go through solid, freeze or death tiles, never pass stoppers against their direction, and diagonal steps can't cut corners. Teleporters count as path steps; checkpoint teleporters are skipped because they depend on each player's history. Every new flag stores its distance to all nearby tiles, so redrawing the path when you leave it costs no search. If you stray more than the goal distance plus 32 tiles behind your start, the path is hidden until you come back.
+The walkable tile graph is built once when the map loads. Paths never go through solid, freeze or death tiles, never pass stoppers against their direction, and diagonal steps can't cut corners. The one way through freeze is falling straight down it onto unfreeze, with nothing but freeze and empty tiles in between: no hookable or unhookable tiles, stoppers, teleporters, speedups or deep freeze. Frozen tees can't steer, so these paths only go down, every tile fallen counts, and they can't be entered or left sideways. Teleporters count as path steps; checkpoint teleporters are skipped because they depend on each player's history. Every new flag stores its distance to all nearby tiles, so redrawing the path when you leave it costs no search. If you stray more than the goal distance plus 32 tiles behind your start, the path is hidden until you come back.
 
 ## Server setup
 

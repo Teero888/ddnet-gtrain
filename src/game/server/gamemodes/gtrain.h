@@ -44,6 +44,8 @@ class CGameControllerGTrain : public CGameControllerDDNet
 	bool m_aPendingPlace[MAX_CLIENTS];
 	CGTrainPathGraph m_PathGraph;
 	std::vector<int> m_vTileNodes;
+	// nodes of tiles tees fall through frozen onto unfreeze, -1 elsewhere
+	std::vector<int> m_vFallNodes;
 	// path distance of every node to the finish line, -1 without a path
 	std::vector<int> m_vFinishDistances;
 	CGTrainPathfinder m_Pathfinder;

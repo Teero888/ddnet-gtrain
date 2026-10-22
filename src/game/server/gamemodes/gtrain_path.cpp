@@ -40,6 +40,56 @@ void CGTrainPathGraph::AddTileEdges(int Index, int Width, int Height, const std:
 		}
 }
 
+std::vector<bool> CGTrainPathGraph::FindFrozenFalls(int Width, int Height, const std::vector<uint8_t> &vFall, const std::vector<bool> &vNodes)
+{
+	std::vector<bool> vFrozenFalls(Width * Height, false);
+	std::vector<bool> vLands(Height);
+	const auto Passable = [&](int Index) { return vFall[Index] == FALL_EMPTY || vFall[Index] == FALL_FREEZE; };
+	for(int x = 0; x < Width; ++x)
+	{
+		// Upwards: falling from the tile reaches unfreeze.
+		bool LandsBelow = false, UnfreezeBelow = false;
+		for(int y = Height - 1; y >= 0; --y)
+		{
+			const int Index = y * Width + x;
+			vLands[y] = Passable(Index) && (UnfreezeBelow || LandsBelow);
+			LandsBelow = vLands[y];
+			UnfreezeBelow = vFall[Index] == FALL_UNFREEZE;
+		}
+		// Downwards: the tee is frozen once it fell into freeze, from a node.
+		bool Frozen = false, Entered = false;
+		for(int y = 0; y < Height; ++y)
+		{
+			const int Index = y * Width + x;
+			Frozen = Passable(Index) && (Frozen || vFall[Index] == FALL_FREEZE);
+			Entered = Frozen && vLands[y] && (Entered || (y > 0 && vNodes[Index - Width]));
+			vFrozenFalls[Index] = Entered;
+		}
+	}
+	return vFrozenFalls;
+}
+
+void CGTrainPathGraph::AddFallEdges(int Width, const std::vector<int> &vTileNodes, const std::vector<int> &vFallNodes, const std::vector<uint8_t> &vStoppers, std::vector<std::pair<int, CEdge>> &vEdges)
+{
+	for(int Index = 0; Index < (int)vFallNodes.size(); ++Index)
+	{
+		const int Node = vFallNodes[Index];
+		if(Node < 0)
+			continue;
+		const int Below = Index + Width;
+		const int Next = Below >= (int)vFallNodes.size() ? -1 : (vFallNodes[Below] >= 0 ? vFallNodes[Below] : vTileNodes[Below]);
+		if(Next >= 0)
+			vEdges.push_back({Node, {Next, DIRECTION_DOWN}});
+		// Entering from above, unless a stopper holds tees there.
+		const int Above = Index - Width;
+		if(Above < 0 || vTileNodes[Above] < 0)
+			continue;
+		if(!vStoppers.empty() && ((vStoppers[Index] & DIRECTION_DOWN) || ((vStoppers[Above] >> 4) & DIRECTION_DOWN)))
+			continue;
+		vEdges.push_back({vTileNodes[Above], {Node, DIRECTION_DOWN}});
+	}
+}
+
 void CGTrainPathGraph::InitEdges(const std::vector<std::pair<int, CEdge>> &vEdges)
 {
 	m_vOutOffsets.assign(m_vNodes.size() + 1, 0);

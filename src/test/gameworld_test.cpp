@@ -1995,6 +1995,80 @@ TEST_F(GameWorld, GTrainGoalsAndPathsRespectStoppers)
 	EXPECT_TRUE(Crossed); // passing in the stopper's direction still works
 }
 
+TEST_F(GameWorld, GTrainPathsFallThroughFreezeOntoUnfreeze)
+{
+	PrepareTrainingCorridor();
+	ClearMapExtras();
+	CCollision *pCollision = GameServer()->Collision();
+	CLayers *pLayers = GameServer()->Layers();
+	ASSERT_NE(pLayers->FrontLayer(), nullptr);
+	auto *pFront = static_cast<CTile *>(pLayers->Map()->GetData(pLayers->FrontLayer()->m_Front));
+	const int Width = pCollision->GetWidth();
+	const int Shaft = Width / 2;
+	ASSERT_GE(pCollision->GetHeight(), 8);
+	g_Config.m_SvGtrainGoalDistance = 2 * Width;
+	int Runner = -1;
+	// An upper corridor from the start line above freeze, with a shaft in
+	// its middle down to a lower corridor, which leads to the finish. The
+	// farthest goal from the left of the upper corridor is in the lower one
+	// when the shaft's tiles let tees fall into it.
+	const auto GoalFromTheLeft = [&](int Tile, int FrontTile, int UnfreezeTile, int UnfreezeFrontTile) {
+		if(Runner >= 0)
+			GameServer()->m_apPlayers[Runner]->KillCharacter(WEAPON_GAME);
+		for(int y = 0; y < pCollision->GetHeight(); ++y)
+			for(int x = 0; x < Width; ++x)
+			{
+				pCollision->SetCollisionAt(x * 32 + 16, y * 32 + 16, TILE_SOLID);
+				pFront[y * Width + x].m_Index = TILE_AIR;
+			}
+		for(int x = 1; x < Width - 1; ++x)
+		{
+			pCollision->SetCollisionAt(x * 32 + 16, 48, TILE_AIR);
+			pCollision->SetCollisionAt(x * 32 + 16, 80, TILE_FREEZE);
+			pCollision->SetCollisionAt(x * 32 + 16, 176, TILE_AIR);
+			pCollision->SetCollisionAt(x * 32 + 16, 208, TILE_FREEZE);
+		}
+		pCollision->SetCollisionAt(Shaft * 32 + 16, 112, Tile);
+		pFront[3 * Width + Shaft].m_Index = FrontTile;
+		pCollision->SetCollisionAt(Shaft * 32 + 16, 144, UnfreezeTile);
+		pFront[4 * Width + Shaft].m_Index = UnfreezeFrontTile;
+		pCollision->SetCollisionAt(48, 48, TILE_START);
+		pCollision->SetCollisionAt((Width - 2) * 32 + 16, 176, TILE_FINISH);
+		delete GameServer()->m_pController;
+		GameServer()->m_pController = new CGameControllerGTrain(GameServer());
+		if(Runner < 0)
+			Runner = SpawnTrainingPlayers({"Runner"})[0];
+		for(int Attempt = 0; Attempt < 200; ++Attempt)
+		{
+			if(CCharacter *pChr = GameServer()->GetPlayerChar(Runner); pChr && pChr->m_Pos.y == 48 && pChr->m_Pos.x < Shaft * 32)
+				return TrainingGoal(Runner);
+			GameServer()->m_apPlayers[Runner]->KillCharacter(WEAPON_GAME);
+			GameServer()->m_apPlayers[Runner]->ForceSpawn(vec2(80, 80));
+			GameServer()->m_pController->Tick();
+		}
+		ADD_FAILURE() << "No start left of the shaft";
+		return vec2(0, 0);
+	};
+
+	// Freeze and unfreeze of either layer.
+	EXPECT_EQ(GoalFromTheLeft(TILE_FREEZE, TILE_AIR, TILE_UNFREEZE, TILE_AIR).y, 176);
+	// The path shows while falling through the freeze too.
+	CCharacter *pChr = GameServer()->GetPlayerChar(Runner);
+	pChr->Unfreeze();
+	GameServer()->m_pController->Tick();
+	pChr->m_Pos = pChr->m_PrevPos = vec2(Shaft * 32 + 16, 112);
+	pChr->SetPosition(pChr->m_Pos);
+	GameServer()->m_pController->Tick();
+	GameServer()->m_apPlayers[Runner]->m_ShowAll = true;
+	EXPECT_GT(TrainingMarkers(Runner), 1);
+	EXPECT_EQ(GoalFromTheLeft(TILE_AIR, TILE_FREEZE, TILE_AIR, TILE_UNFREEZE).y, 176);
+	// Deep freeze needs more than unfreeze, stoppers stop the fall.
+	EXPECT_EQ(GoalFromTheLeft(TILE_DFREEZE, TILE_AIR, TILE_UNFREEZE, TILE_AIR).y, 48);
+	EXPECT_EQ(GoalFromTheLeft(TILE_FREEZE, TILE_STOPA, TILE_UNFREEZE, TILE_AIR).y, 48);
+	// So does landing in freeze.
+	EXPECT_EQ(GoalFromTheLeft(TILE_FREEZE, TILE_AIR, TILE_FREEZE, TILE_AIR).y, 48);
+}
+
 TEST_F(GameWorld, GTrainCaptureCountsFailsAtTheSamePosition)
 {
 	PrepareTrainingCorridor();

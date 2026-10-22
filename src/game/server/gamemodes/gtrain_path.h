@@ -36,10 +36,27 @@ struct CGTrainPathGraph
 	std::vector<int> m_vInOffsets;
 	std::vector<int> m_vInNodes;
 
+	// How a tee falling straight down passes a tile.
+	enum
+	{
+		FALL_STOP, // anything that could stop or turn the fall
+		FALL_EMPTY,
+		FALL_FREEZE,
+		FALL_UNFREEZE, // a node, where frozen tees land unfrozen
+	};
+
 	void InitEdges(const std::vector<std::pair<int, CEdge>> &vEdges);
 	// vStoppers holds per tile the directions blocked moving onto it in the
 	// low four bits and moving off it in the high four bits, or is empty.
 	static void AddTileEdges(int Index, int Width, int Height, const std::vector<int> &vTileNodes, const std::vector<uint8_t> &vStoppers, std::vector<std::pair<int, CEdge>> &vEdges);
+	// The tiles tees fall through frozen to an unfreeze tile, from a freeze
+	// tile straight down with only freeze and empty tiles in between. Falls
+	// start below a tile in vNodes, others can't be entered.
+	static std::vector<bool> FindFrozenFalls(int Width, int Height, const std::vector<uint8_t> &vFall, const std::vector<bool> &vNodes);
+	// Frozen tees can't steer, so the nodes of falls in vFallNodes only lead
+	// down, to the next one or the unfreeze tile. Tees enter them from the
+	// node of the tile above.
+	static void AddFallEdges(int Width, const std::vector<int> &vTileNodes, const std::vector<int> &vFallNodes, const std::vector<uint8_t> &vStoppers, std::vector<std::pair<int, CEdge>> &vEdges);
 	bool IsTeleportStep(int From, int To) const;
 };
 

@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <queue>
+#include <string>
 
 namespace
 {
@@ -27,6 +28,79 @@ namespace
 		return Graph;
 	}
 
+	// Rows of tiles: '.' empty, 'f' freeze, 'u' unfreeze, '#' anything that
+	// stops a fall, 'v' empty with a stopper holding tees on it from above.
+	struct CFallGrid
+	{
+		CGTrainPathGraph m_Graph;
+		int m_Width;
+		std::vector<int> m_vTileNodes;
+		std::vector<int> m_vFallNodes;
+
+		int Node(int x, int y) const { return m_vTileNodes[y * m_Width + x]; }
+		int FallNode(int x, int y) const { return m_vFallNodes[y * m_Width + x]; }
+	};
+
+	CFallGrid FallGrid(const std::vector<std::string> &vRows)
+	{
+		CFallGrid Grid;
+		const int Width = Grid.m_Width = vRows[0].size();
+		const int Height = vRows.size();
+		std::vector<uint8_t> vFall(Width * Height, CGTrainPathGraph::FALL_STOP);
+		std::vector<uint8_t> vStoppers(Width * Height, 0);
+		for(int y = 0; y < Height; ++y)
+			for(int x = 0; x < Width; ++x)
+			{
+				const char Tile = vRows[y][x];
+				vFall[y * Width + x] = Tile == '.' || Tile == 'v' ? CGTrainPathGraph::FALL_EMPTY : Tile == 'f' ? CGTrainPathGraph::FALL_FREEZE :
+													   Tile == 'u'         ? CGTrainPathGraph::FALL_UNFREEZE :
+																 CGTrainPathGraph::FALL_STOP;
+				if(Tile == 'v')
+					vStoppers[y * Width + x] = CGTrainPathGraph::DIRECTION_DOWN << 4;
+			}
+		std::vector<bool> vNodes(Width * Height);
+		for(int Index = 0; Index < Width * Height; ++Index)
+		{
+			const char Tile = vRows[Index / Width][Index % Width];
+			vNodes[Index] = Tile == '.' || Tile == 'v' || Tile == 'u';
+		}
+		const std::vector<bool> vFrozenFalls = CGTrainPathGraph::FindFrozenFalls(Width, Height, vFall, vNodes);
+		Grid.m_vTileNodes.assign(Width * Height, -1);
+		Grid.m_vFallNodes.assign(Width * Height, -1);
+		for(int Index = 0; Index < Width * Height; ++Index)
+		{
+			const vec2 Pos((Index % Width) * 32 + 16, (Index / Width) * 32 + 16);
+			if(vNodes[Index])
+			{
+				Grid.m_vTileNodes[Index] = Grid.m_Graph.m_vNodes.size();
+				Grid.m_Graph.m_vNodes.push_back({Pos, true});
+			}
+			if(vFrozenFalls[Index])
+			{
+				Grid.m_vFallNodes[Index] = Grid.m_Graph.m_vNodes.size();
+				Grid.m_Graph.m_vNodes.push_back({Pos, false});
+			}
+		}
+		std::vector<std::pair<int, CGTrainPathGraph::CEdge>> vEdges;
+		for(int i = 0; i < Width * Height; ++i)
+			CGTrainPathGraph::AddTileEdges(i, Width, Height, Grid.m_vTileNodes, vStoppers, vEdges);
+		CGTrainPathGraph::AddFallEdges(Width, Grid.m_vTileNodes, Grid.m_vFallNodes, vStoppers, vEdges);
+		Grid.m_Graph.InitEdges(vEdges);
+		return Grid;
+	}
+
+	int FallDistance(CFallGrid &Grid, int From, int To)
+	{
+		CGTrainPathfinder Finder(Grid.m_Graph);
+		std::vector<int> vDistances;
+		Finder.FindDistances({To}, vDistances);
+		return vDistances[From];
+	}
+
+	int NumFallNodes(const CFallGrid &Grid)
+	{
+		return std::count_if(Grid.m_vFallNodes.begin(), Grid.m_vFallNodes.end(), [](int Node) { return Node >= 0; });
+	}
 }
 
 TEST(GTrainPath, ExactPathDistanceAndObstacleRoute)
@@ -383,4 +457,76 @@ TEST(GTrainPath, ReachableNodesWithinDepth)
 	CGTrainPathfinder TeleportFinder(Teleport);
 	TeleportFinder.FindReachable({0}, 2, vReachable);
 	EXPECT_EQ(vReachable, (std::vector<int>{0, 3, 2}));
+}
+
+TEST(GTrainPath, FallsThroughFreezeOntoUnfreeze)
+{
+	auto Grid = FallGrid({
+		"...",
+		"#f#",
+		"#f#",
+		"#u#",
+		"...",
+	});
+	// Every tile of the fall counts, and there is no way back up.
+	EXPECT_EQ(FallDistance(Grid, Grid.Node(1, 0), Grid.Node(1, 4)), 4);
+	EXPECT_EQ(FallDistance(Grid, Grid.Node(1, 4), Grid.Node(1, 0)), -1);
+	EXPECT_EQ(FallDistance(Grid, Grid.Node(0, 0), Grid.Node(2, 4)), 6);
+	// Routes fall straight down.
+	CGTrainPathfinder Finder(Grid.m_Graph);
+	CGTrainGoal Goal;
+	Finder.BuildField(Goal, Grid.Node(1, 4), 10);
+	std::vector<int> vRoute;
+	ASSERT_TRUE(Finder.FindPath(Goal, Grid.Node(1, 0), vRoute));
+	EXPECT_EQ(vRoute, (std::vector<int>{Grid.Node(1, 0), Grid.FallNode(1, 1), Grid.FallNode(1, 2), Grid.Node(1, 3), Grid.Node(1, 4)}));
+	EXPECT_FALSE(Grid.m_Graph.IsTeleportStep(Grid.Node(1, 0), Grid.FallNode(1, 1)));
+}
+
+TEST(GTrainPath, FallsNeedUnfreezeRightBelowTheFreeze)
+{
+	// Landing frozen, on the ground or in more freeze, is no way on.
+	EXPECT_EQ(NumFallNodes(FallGrid({".", "f", "f", "#"})), 0);
+	EXPECT_EQ(NumFallNodes(FallGrid({".", "f", ".", "#", "u"})), 0);
+	EXPECT_EQ(NumFallNodes(FallGrid({".", "f", "f"})), 0);
+	// Anything in the way stops the fall, and falls nothing can enter have
+	// no nodes.
+	auto Stopped = FallGrid({".", "f", "#", "f", "u"});
+	EXPECT_EQ(NumFallNodes(Stopped), 0);
+	EXPECT_EQ(FallDistance(Stopped, Stopped.Node(0, 0), Stopped.Node(0, 4)), -1);
+	// Falls without freeze are just paths.
+	EXPECT_EQ(NumFallNodes(FallGrid({".", ".", "u"})), 0);
+	// Empty tiles between freeze are falling too, unfreeze only after it.
+	auto Grid = FallGrid({".", "f", ".", "f", "u", "f", "u"});
+	EXPECT_EQ(NumFallNodes(Grid), 4);
+	EXPECT_LT(Grid.FallNode(0, 0), 0);
+	EXPECT_GE(Grid.FallNode(0, 2), 0);
+	EXPECT_LT(Grid.FallNode(0, 4), 0);
+	EXPECT_EQ(FallDistance(Grid, Grid.Node(0, 0), Grid.Node(0, 6)), 6);
+	// The empty tile in the fall is a node of its own too, to fall on from.
+	EXPECT_EQ(FallDistance(Grid, Grid.Node(0, 2), Grid.Node(0, 4)), 2);
+}
+
+TEST(GTrainPath, FrozenTeesCantSteer)
+{
+	auto Grid = FallGrid({
+		"#.#",
+		"#f#",
+		"...",
+		"#f#",
+		"#u#",
+	});
+	// Paths can't enter falls from the side or leave them, only the empty
+	// tile in the middle has its sideways paths.
+	for(int x : {0, 2})
+	{
+		EXPECT_EQ(FallDistance(Grid, Grid.Node(x, 2), Grid.Node(1, 4)), 3);
+		EXPECT_EQ(FallDistance(Grid, Grid.Node(1, 0), Grid.Node(x, 2)), -1);
+	}
+	for(int Node : Grid.m_vFallNodes)
+		if(Node >= 0)
+			EXPECT_EQ(Grid.m_Graph.m_vOutOffsets[Node + 1] - Grid.m_Graph.m_vOutOffsets[Node], 1);
+	// Stoppers holding tees above the freeze keep them out of the fall.
+	auto Held = FallGrid({"v", "f", "u"});
+	EXPECT_GE(Held.FallNode(0, 1), 0);
+	EXPECT_EQ(FallDistance(Held, Held.Node(0, 0), Held.Node(0, 2)), -1);
 }

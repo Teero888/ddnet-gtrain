@@ -446,17 +446,52 @@ void CGameControllerGTrain::FindTrainPositions()
 
 	// Spawn eligibility and path eligibility differ: routes may pass safe tiles
 	// without freeze below, but never route through freeze, death or race lines.
-	m_vTileNodes.assign(Width * Height, -1);
+	// Checkpoint teleports depend on character history, so they cannot be
+	// represented as unconditional edges in a shared static graph.
+	const auto IsNodeTile = [&](int Index) {
+		return vKept[Index] && !vDiscarded[Index] && !IsBlocked(Index) &&
+		       !HasTile(Index, TILE_FREEZE) && !HasTile(Index, TILE_DFREEZE) && !HasTile(Index, TILE_DEATH) &&
+		       !HasTile(Index, TILE_START) && !HasTile(Index, TILE_FINISH) && !IsCheckTeleport(Index);
+	};
+	// Only falling straight through freeze onto unfreeze crosses freeze.
+	// Anything else in the way, like hookable or unhookable tiles, stoppers,
+	// teleporters, speedups or deep freeze, could stop the fall or change it.
+	std::vector<uint8_t> vFall(Width * Height, CGTrainPathGraph::FALL_STOP);
+	std::vector<bool> vNodeTiles(Width * Height);
 	for(int Index = 0; Index < Width * Height; ++Index)
 	{
-		if(!vKept[Index] || vDiscarded[Index] || IsBlocked(Index) ||
-			HasTile(Index, TILE_FREEZE) || HasTile(Index, TILE_DFREEZE) || HasTile(Index, TILE_DEATH) ||
-			HasTile(Index, TILE_START) || HasTile(Index, TILE_FINISH) || IsCheckTeleport(Index))
-			continue;
-		// Checkpoint teleports depend on character history, so they cannot be
-		// represented as unconditional edges in a shared static graph.
-		m_vTileNodes[Index] = (int)m_PathGraph.m_vNodes.size();
-		m_PathGraph.m_vNodes.push_back({vec2((Index % Width) * 32.0f + 16.0f, (Index / Width) * 32.0f + 16.0f), false});
+		vNodeTiles[Index] = IsNodeTile(Index);
+		const int Tile = pCollision->GetTileIndex(Index);
+		const int FrontTile = pCollision->GetFrontTileIndex(Index);
+		const auto Only = [&](int Allowed) { return (Tile == Allowed || Tile == TILE_AIR) && (FrontTile == Allowed || FrontTile == TILE_AIR); };
+		CDoorTile Door;
+		pCollision->GetDoorTile(Index, &Door);
+		if(Only(TILE_UNFREEZE) && (Tile == TILE_UNFREEZE || FrontTile == TILE_UNFREEZE) && vNodeTiles[Index])
+			vFall[Index] = CGTrainPathGraph::FALL_UNFREEZE;
+		else if(Only(TILE_FREEZE) && !pCollision->IsTeleport(Index) && !pCollision->IsEvilTeleport(Index) && !IsCheckTeleport(Index) &&
+			!pCollision->IsTeleCheckpoint(Index) && !pCollision->IsSpeedup(Index) && !pCollision->GetSwitchType(Index) && !Door.m_Index)
+			vFall[Index] = Tile == TILE_FREEZE || FrontTile == TILE_FREEZE ? CGTrainPathGraph::FALL_FREEZE : CGTrainPathGraph::FALL_EMPTY;
+	}
+	const std::vector<bool> vFrozenFalls = CGTrainPathGraph::FindFrozenFalls(Width, Height, vFall, vNodeTiles);
+	const int NumFallTiles = std::count(vFrozenFalls.begin(), vFrozenFalls.end(), true);
+	if(NumFallTiles)
+		log_info("gtrain", "found %d tiles to fall through frozen onto unfreeze", NumFallTiles);
+	// Nodes follow the map rows, falling ones too, so goal fields stay small.
+	m_vTileNodes.assign(Width * Height, -1);
+	m_vFallNodes.assign(Width * Height, -1);
+	for(int Index = 0; Index < Width * Height; ++Index)
+	{
+		const vec2 Pos((Index % Width) * 32.0f + 16.0f, (Index / Width) * 32.0f + 16.0f);
+		if(vNodeTiles[Index])
+		{
+			m_vTileNodes[Index] = (int)m_PathGraph.m_vNodes.size();
+			m_PathGraph.m_vNodes.push_back({Pos, false});
+		}
+		if(vFrozenFalls[Index])
+		{
+			m_vFallNodes[Index] = (int)m_PathGraph.m_vNodes.size();
+			m_PathGraph.m_vNodes.push_back({Pos, false});
+		}
 	}
 
 	// Paths cannot pass stoppers against their direction. One-way stoppers
@@ -485,6 +520,7 @@ void CGameControllerGTrain::FindTrainPositions()
 		}
 		CGTrainPathGraph::AddTileEdges(Index, Width, Height, m_vTileNodes, vStoppers, vEdges);
 	}
+	CGTrainPathGraph::AddFallEdges(Width, m_vTileNodes, m_vFallNodes, vStoppers, vEdges);
 	m_PathGraph.InitEdges(vEdges);
 	m_Pathfinder.FindDistances(NodesBeside(TILE_FINISH), m_vFinishDistances);
 
@@ -1222,7 +1258,9 @@ int CGameControllerGTrain::PathNode(vec2 Pos) const
 	const int Height = GameServer()->Collision()->GetHeight();
 	if(Pos.x < 0 || Pos.y < 0 || Pos.x >= Width * 32.0f || Pos.y >= Height * 32.0f)
 		return -1;
-	return m_vTileNodes[(int)(Pos.y / 32) * Width + (int)(Pos.x / 32)];
+	// Tees falling through freeze are on its falling node.
+	const int Index = (int)(Pos.y / 32) * Width + (int)(Pos.x / 32);
+	return m_vTileNodes[Index] >= 0 ? m_vTileNodes[Index] : m_vFallNodes[Index];
 }
 
 void CGameControllerGTrain::UpdatePath(CCharacter *pChr)
