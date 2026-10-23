@@ -1834,8 +1834,8 @@ bool CScoreWorker::SaveGTrainRun(IDbConnection *pSqlServer, const ISqlData *pGam
 	std::vector<unsigned char> vRun = pData->m_Run.Encode();
 	char aBuf[512];
 	str_format(aBuf, sizeof(aBuf),
-		"%s INTO %s_gtrain_runs(Map, MapSha256, Name, Timestamp, GameId, Revision, StartTick, Ticks, Distance, Run) "
-		"VALUES (?, ?, ?, %s, ?, ?, ?, ?, ?, ?)",
+		"%s INTO %s_gtrain_runs(Map, MapSha256, Name, Timestamp, GameId, Revision, StartTick, Ticks, Distance, Elo, SpeedFactor, Run) "
+		"VALUES (?, ?, ?, %s, ?, ?, ?, ?, ?, ?, ?, ?)",
 		pSqlServer->InsertIgnore(), pSqlServer->GetPrefix(), pSqlServer->InsertTimestampAsUtc());
 	if(!pSqlServer->PrepareStatement(aBuf, pError, ErrorSize))
 	{
@@ -1850,7 +1850,9 @@ bool CScoreWorker::SaveGTrainRun(IDbConnection *pSqlServer, const ISqlData *pGam
 	pSqlServer->BindInt(7, pData->m_Run.m_Start.m_Tick);
 	pSqlServer->BindInt(8, pData->m_Run.m_vInputs.size());
 	pSqlServer->BindInt(9, pData->m_Distance);
-	pSqlServer->BindBlob(10, vRun.data(), vRun.size());
+	pSqlServer->BindFloat(10, pData->m_Elo);
+	pSqlServer->BindFloat(11, pData->m_SpeedFactor);
+	pSqlServer->BindBlob(12, vRun.data(), vRun.size());
 	int NumInserted;
 	return pSqlServer->ExecuteUpdate(&NumInserted, pError, ErrorSize);
 }

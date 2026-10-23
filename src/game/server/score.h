@@ -67,8 +67,9 @@ public:
 	void LoadMapDifficulty(const std::shared_ptr<CScoreMapDifficultyResult> &pResult);
 	void LoadGTrainStats(const char *pName, const std::shared_ptr<CScoreGTrainStatsResult> &pResult);
 	void AddGTrainStats(const char *pName, const CGTrainStats &Stats);
-	// Distance is the path distance of the run's goal.
-	void SaveGTrainRun(const char *pName, int Distance, CGTrainRun &&Run);
+	// Distance is the path distance of the run's goal, Elo and SpeedFactor
+	// what the capture earned.
+	void SaveGTrainRun(const char *pName, int Distance, float Elo, float SpeedFactor, CGTrainRun &&Run);
 	void ShowGTrainTop(int ClientId, EGTrainStat Stat, int Offset = 1);
 	void ShowElo(int ClientId, const char *pName);
 	void ShowGTrainProfile(int ClientId, const char *pName);

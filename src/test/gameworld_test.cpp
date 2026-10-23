@@ -363,6 +363,8 @@ public:
 		std::string m_Name;
 		int m_Ticks;
 		int m_Distance;
+		float m_Elo;
+		float m_SpeedFactor;
 		CGTrainRun m_Run;
 	};
 
@@ -373,7 +375,7 @@ public:
 		std::unique_ptr<IDbConnection> pConnection = CreateSqliteConnection(pDatabase, false);
 		char aError[256];
 		EXPECT_TRUE(pConnection->Connect(aError, sizeof(aError))) << aError;
-		EXPECT_TRUE(pConnection->PrepareStatement("SELECT Map, MapSha256, Name, Ticks, Distance, Run FROM record_gtrain_runs ORDER BY rowid", aError, sizeof(aError))) << aError;
+		EXPECT_TRUE(pConnection->PrepareStatement("SELECT Map, MapSha256, Name, Ticks, Distance, Elo, SpeedFactor, Run FROM record_gtrain_runs ORDER BY rowid", aError, sizeof(aError))) << aError;
 		bool End = false;
 		while(pConnection->Step(&End, aError, sizeof(aError)) && !End)
 		{
@@ -387,8 +389,10 @@ public:
 			Stored.m_Name = aBuf;
 			Stored.m_Ticks = pConnection->GetInt(4);
 			Stored.m_Distance = pConnection->GetInt(5);
+			Stored.m_Elo = pConnection->GetFloat(6);
+			Stored.m_SpeedFactor = pConnection->GetFloat(7);
 			std::vector<unsigned char> vData(1 << 20);
-			vData.resize(pConnection->GetBlob(6, vData.data(), vData.size()));
+			vData.resize(pConnection->GetBlob(8, vData.data(), vData.size()));
 			EXPECT_TRUE(Stored.m_Run.Decode(vData.data(), vData.size()));
 		}
 		EXPECT_TRUE(End) << aError;
@@ -3289,6 +3293,9 @@ TEST_F(GameWorld, GTrainCapturesReplayExactly)
 		EXPECT_EQ(Stored.m_Ticks, (int)Stored.m_Run.m_vInputs.size());
 		EXPECT_GT(Stored.m_Distance, 0);
 		EXPECT_EQ(Stored.m_Run.m_KeptWeapons, 0);
+		// What the capture earned, at the speed of its stored ticks.
+		EXPECT_GT(Stored.m_Elo, 0.0f);
+		EXPECT_FLOAT_EQ(Stored.m_SpeedFactor, GTrainElo::SpeedFactor(*CGameControllerGTrain::EloStep("Main", 1), Stored.m_Distance, Stored.m_Ticks / (double)SERVER_TICK_SPEED));
 	}
 	ASSERT_EQ(vStored[0].m_Run.m_Start.m_vShots.size(), 1u);
 	EXPECT_FALSE(vStored[0].m_Run.m_Start.m_vShots[0].m_Laser);
@@ -3411,9 +3418,23 @@ TEST_F(GameWorld, GTrainStoresOnlyCapturesThatEarnElo)
 	Capture(false);
 	EXPECT_EQ(StoredRuns(aDatabase).size(), 0u);
 	pController->SetMapDifficulty("Main", 1);
-	Release();
-	Capture(false);
+	// Runs keep the ELO the capture added, not the player's total.
+	const auto CaptureEarning = [&]() {
+		const double EloBefore = GTrainElo::FromPoints(pController->Stats(Runner).m_Points);
+		Release();
+		Capture(false);
+		return GTrainElo::FromPoints(pController->Stats(Runner).m_Points) - EloBefore;
+	};
+	const auto ExpectEarned = [&](double Elo) {
+		const CStoredRun Stored = StoredRuns(aDatabase).back();
+		EXPECT_GT(Elo, 0.0);
+		EXPECT_FLOAT_EQ(Stored.m_Elo, Elo);
+		// Instant captures are as fast as it gets.
+		EXPECT_FLOAT_EQ(Stored.m_SpeedFactor, GTrainElo::MAX_SPEED_FACTOR);
+	};
+	double Elo = CaptureEarning();
 	EXPECT_EQ(StoredRuns(aDatabase).size(), 1u);
+	ExpectEarned(Elo);
 	// Neither do frozen captures.
 	Release();
 	Capture(true);
@@ -3444,9 +3465,9 @@ TEST_F(GameWorld, GTrainStoresOnlyCapturesThatEarnElo)
 	Capture(false);
 	EXPECT_EQ(StoredRuns(aDatabase).size(), 1u);
 	g_Config.m_SvGtrainRecordRuns = 1;
-	Release();
-	Capture(false);
+	Elo = CaptureEarning();
 	EXPECT_EQ(StoredRuns(aDatabase).size(), 2u);
+	ExpectEarned(Elo);
 }
 
 TEST_F(GameWorld, WeaponChatCommandsStillRequirePracticeOutsideGTrain)

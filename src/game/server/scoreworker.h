@@ -136,6 +136,8 @@ struct CSqlGTrainRunData : ISqlData
 	char m_aGameUuid[UUID_MAXSTRSIZE];
 	char m_aRevision[64];
 	int m_Distance;
+	float m_Elo;
+	float m_SpeedFactor;
 	CGTrainRun m_Run;
 };
 

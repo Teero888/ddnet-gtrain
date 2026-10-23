@@ -147,7 +147,7 @@ class CGameControllerGTrain : public CGameControllerDDNet
 	void AddStats(int ClientId, const CGTrainStats &Stats);
 	void EndAttempt(int ClientId, bool Captured);
 	void StartRun(class CCharacter *pChr);
-	void SaveRun(class CCharacter *pChr);
+	void SaveRun(class CCharacter *pChr, const CEloGain &Gain);
 	void SaveStats(int ClientId);
 	int PathNode(vec2 Pos) const;
 	void UpdatePath(class CCharacter *pChr);

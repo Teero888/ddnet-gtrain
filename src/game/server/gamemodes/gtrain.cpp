@@ -228,7 +228,7 @@ void CGameControllerGTrain::StartRun(CCharacter *pChr)
 	Attempt.m_Run->m_Goal = m_PathGraph.m_vNodes[Attempt.m_pGoal->m_Goal].m_Pos;
 }
 
-void CGameControllerGTrain::SaveRun(CCharacter *pChr)
+void CGameControllerGTrain::SaveRun(CCharacter *pChr, const CEloGain &Gain)
 {
 	const int ClientId = pChr->GetPlayer()->GetCid();
 	CAttempt &Attempt = m_aAttempts[ClientId];
@@ -236,7 +236,7 @@ void CGameControllerGTrain::SaveRun(CCharacter *pChr)
 		return;
 	Attempt.m_Run->m_EndPos = pChr->Core()->m_Pos;
 	Attempt.m_Run->m_EndVel = pChr->Core()->m_Vel;
-	GameServer()->Score()->SaveGTrainRun(Server()->ClientName(ClientId), Attempt.m_pGoal->m_Distance, std::move(*Attempt.m_Run));
+	GameServer()->Score()->SaveGTrainRun(Server()->ClientName(ClientId), Attempt.m_pGoal->m_Distance, Gain.m_Elo, Gain.m_SpeedFactor, std::move(*Attempt.m_Run));
 	Attempt.m_Run.reset();
 }
 
@@ -1362,7 +1362,7 @@ void CGameControllerGTrain::CheckGoal(CCharacter *pChr)
 		const std::optional<CEloGain> Gain = AwardElo(ClientId, Frozen);
 		// The runs stored are those of rated play.
 		if(Gain && !Gain->m_pNoElo)
-			SaveRun(pChr);
+			SaveRun(pChr, *Gain);
 		EndAttempt(ClientId, true);
 		if(FightSize(Group) > 1)
 		{

@@ -889,6 +889,8 @@ struct GTrainRuns : public Score // NOLINT(readability-identifier-naming)
 		str_copy(m_Data.m_aGameUuid, "a1b2c3d4-0000-4000-8000-000000000001");
 		str_copy(m_Data.m_aRevision, "144f35598d6b4ba9");
 		m_Data.m_Distance = 120;
+		m_Data.m_Elo = 12.25f;
+		m_Data.m_SpeedFactor = 1.5f;
 		m_Data.m_Run.m_Start.m_Tick = 5000;
 		m_Data.m_Run.m_Start.m_Pos = vec2(1616, 848);
 		m_Data.m_Run.m_vInputs.resize(3);
@@ -908,7 +910,7 @@ TEST_P(GTrainRuns, StoredWithMapAndPlayer)
 	// A second capture in the same second with the same length is a run too.
 	m_Data.m_Run.m_Start.m_Tick += SERVER_TICK_SPEED / 2;
 	Save();
-	ASSERT_TRUE(m_pConn->PrepareStatement("SELECT Map, MapSha256, Name, GameId, Revision, StartTick, Ticks, Distance, Run FROM record_gtrain_runs ORDER BY StartTick", m_aError, sizeof(m_aError))) << m_aError;
+	ASSERT_TRUE(m_pConn->PrepareStatement("SELECT Map, MapSha256, Name, GameId, Revision, StartTick, Ticks, Distance, Elo, SpeedFactor, Run FROM record_gtrain_runs ORDER BY StartTick", m_aError, sizeof(m_aError))) << m_aError;
 	bool End;
 	ASSERT_TRUE(m_pConn->Step(&End, m_aError, sizeof(m_aError))) << m_aError;
 	ASSERT_FALSE(End);
@@ -926,8 +928,10 @@ TEST_P(GTrainRuns, StoredWithMapAndPlayer)
 	EXPECT_EQ(m_pConn->GetInt(6), 5000);
 	EXPECT_EQ(m_pConn->GetInt(7), 3);
 	EXPECT_EQ(m_pConn->GetInt(8), 120);
+	EXPECT_FLOAT_EQ(m_pConn->GetFloat(9), 12.25f);
+	EXPECT_FLOAT_EQ(m_pConn->GetFloat(10), 1.5f);
 	std::vector<unsigned char> vRun(4096);
-	vRun.resize(m_pConn->GetBlob(9, vRun.data(), vRun.size()));
+	vRun.resize(m_pConn->GetBlob(11, vRun.data(), vRun.size()));
 	CGTrainRun Run;
 	ASSERT_TRUE(Run.Decode(vRun.data(), vRun.size()));
 	EXPECT_EQ(Run.m_Start.m_Tick, 5000);

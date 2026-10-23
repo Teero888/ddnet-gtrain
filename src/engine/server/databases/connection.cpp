@@ -136,7 +136,8 @@ void IDbConnection::FormatCreateGTrainRuns(char *aBuf, unsigned int BufferSize, 
 	// Every GTrain capture made in control, as data that replays it. The
 	// map's hash and the server's git revision tell the map and physics it
 	// was made with. A run starts at a tick of its game, the server's map
-	// load, and lasts Ticks.
+	// load, and lasts Ticks. Elo is what the capture added to the player's
+	// ELO, SpeedFactor the multiplier its speed gave the points.
 	str_format(aBuf, BufferSize,
 		"CREATE TABLE IF NOT EXISTS %s_gtrain_runs ("
 		"  Map VARCHAR(128) COLLATE %s NOT NULL, "
@@ -148,6 +149,8 @@ void IDbConnection::FormatCreateGTrainRuns(char *aBuf, unsigned int BufferSize, 
 		"  StartTick INT NOT NULL, "
 		"  Ticks INT NOT NULL, "
 		"  Distance INT NOT NULL, "
+		"  Elo FLOAT NOT NULL, "
+		"  SpeedFactor FLOAT NOT NULL, "
 		"  Run %s NOT NULL, "
 		"  PRIMARY KEY (Map, GameId, StartTick, Name)"
 		")",

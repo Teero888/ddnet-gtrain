@@ -304,7 +304,7 @@ void CScore::AddGTrainStats(const char *pName, const CGTrainStats &Stats)
 	m_pPool->ExecuteWrite(CScoreWorker::AddGTrainStats, std::move(Tmp), "add gtrain stats");
 }
 
-void CScore::SaveGTrainRun(const char *pName, int Distance, CGTrainRun &&Run)
+void CScore::SaveGTrainRun(const char *pName, int Distance, float Elo, float SpeedFactor, CGTrainRun &&Run)
 {
 	auto Tmp = std::make_unique<CSqlGTrainRunData>();
 	str_copy(Tmp->m_aMap, GameServer()->Map()->BaseName());
@@ -314,6 +314,8 @@ void CScore::SaveGTrainRun(const char *pName, int Distance, CGTrainRun &&Run)
 	FormatUuid(GameServer()->GameUuid(), Tmp->m_aGameUuid, sizeof(Tmp->m_aGameUuid));
 	str_copy(Tmp->m_aRevision, GIT_SHORTREV_HASH ? GIT_SHORTREV_HASH : "");
 	Tmp->m_Distance = Distance;
+	Tmp->m_Elo = Elo;
+	Tmp->m_SpeedFactor = SpeedFactor;
 	Tmp->m_Run = std::move(Run);
 	m_pPool->ExecuteWrite(CScoreWorker::SaveGTrainRun, std::move(Tmp), "save gtrain run");
 }
