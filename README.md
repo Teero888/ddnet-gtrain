@@ -118,7 +118,7 @@ Hover doors need a switch layer. The server adds an empty one to maps without it
 ./map_add_switch_layer maps/*.map
 ```
 
-The tool changes maps in place and skips maps that have a switch layer already. A map server serves each map as `<map>_<sha256>.map`, and `sv_maps_base_url` is its address ending in `/`. Without one, clients download maps from the game server; keep `sv_map_window` at 25 or below then, since larger windows overflow the connection's resend buffer and can stall downloads.
+The tool changes maps in place and skips maps that have a switch layer already. It adds the switch layer to the game group, where the map editor requires it, and moves switch layers from other groups there, like the group of their own that earlier versions added. A map server serves each map as `<map>_<sha256>.map`, and `sv_maps_base_url` is its address ending in `/`. Without one, clients download maps from the game server; keep `sv_map_window` at 25 or below then, since larger windows overflow the connection's resend buffer and can stall downloads.
 
 | Setting | Default | Description |
 | --- | --- | --- |

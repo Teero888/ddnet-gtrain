@@ -100,7 +100,8 @@ bool CGameControllerGTrain::AddSwitchLayer(IStorage *pStorage, const char *pPath
 	{
 	case EAddSwitchLayer::FAILED: return false;
 	case EAddSwitchLayer::PRESENT: return true;
-	case EAddSwitchLayer::ADDED: break;
+	case EAddSwitchLayer::ADDED:
+	case EAddSwitchLayer::MOVED: break;
 	}
 	str_copy(pNewPath, aTemp, NewPathSize);
 	return true;

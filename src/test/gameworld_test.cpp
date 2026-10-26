@@ -33,6 +33,7 @@
 #include <game/server/gameworld.h>
 #include <game/server/player.h>
 #include <game/server/score.h>
+#include <game/switch_layer.h>
 #include <game/version.h>
 
 #include <gtest/gtest.h>
@@ -502,19 +503,56 @@ TEST_F(GameWorld, GTrainAddsSwitchLayerToServedMaps)
 	ASSERT_TRUE(CGameControllerGTrain::AddSwitchLayer(m_pStorage.get(), "maps/coverage.map", aPath, sizeof(aPath)));
 	EXPECT_STREQ(aPath, "");
 
-	// Others get an empty one in a group of their own, the rest stays.
+	// Others get an empty one at the end of the game group, which the editor
+	// requires. The rest stays.
 	ASSERT_TRUE(CGameControllerGTrain::AddSwitchLayer(m_pStorage.get(), "maps/ctf1.map", aPath, sizeof(aPath)));
 	ASSERT_STRNE(aPath, "");
 	CDataFileReader Original, Modified;
 	ASSERT_TRUE(Original.Open(m_pStorage.get(), "maps/ctf1.map", IStorage::TYPE_ALL));
 	ASSERT_TRUE(Modified.Open(m_pStorage.get(), aPath, IStorage::TYPE_ALL));
-	EXPECT_EQ(Modified.NumItems(), Original.NumItems() + 2);
+	EXPECT_EQ(Modified.NumItems(), Original.NumItems() + 1);
 	ASSERT_EQ(Modified.NumData(), Original.NumData() + 2);
 	for(int i = 0; i < Original.NumData(); ++i)
 	{
 		ASSERT_EQ(Modified.GetDataSize(i), Original.GetDataSize(i));
 		EXPECT_EQ(mem_comp(Modified.GetData(i), Original.GetData(i), Original.GetDataSize(i)), 0);
 	}
+	// The layer items of every group, as bytes.
+	const auto GroupLayers = [](CDataFileReader &Reader) {
+		int GroupsStart, NumGroups, LayersStart, NumLayers;
+		Reader.GetType(MAPITEMTYPE_GROUP, &GroupsStart, &NumGroups);
+		Reader.GetType(MAPITEMTYPE_LAYER, &LayersStart, &NumLayers);
+		std::vector<std::vector<std::vector<char>>> vvvLayers(NumGroups);
+		for(int g = 0; g < NumGroups; ++g)
+		{
+			const auto *pGroup = static_cast<const CMapItemGroup_v1 *>(Reader.GetItem(GroupsStart + g));
+			for(int l = pGroup->m_StartLayer; l < pGroup->m_StartLayer + pGroup->m_NumLayers; ++l)
+			{
+				const char *pLayer = static_cast<const char *>(Reader.GetItem(LayersStart + l));
+				vvvLayers[g].emplace_back(pLayer, pLayer + Reader.GetItemSize(LayersStart + l));
+			}
+		}
+		return vvvLayers;
+	};
+	const auto vvvOriginal = GroupLayers(Original);
+	auto vvvModified = GroupLayers(Modified);
+	ASSERT_EQ(vvvModified.size(), vvvOriginal.size());
+	int NumChanged = 0;
+	for(size_t g = 0; g < vvvOriginal.size(); ++g)
+	{
+		if(vvvModified[g] == vvvOriginal[g])
+			continue;
+		++NumChanged;
+		ASSERT_EQ(vvvModified[g].size(), vvvOriginal[g].size() + 1);
+		const auto *pSwitch = reinterpret_cast<const CMapItemLayerTilemap *>(vvvModified[g].back().data());
+		EXPECT_EQ(pSwitch->m_Flags, TILESLAYERFLAG_SWITCH);
+		vvvModified[g].pop_back();
+		EXPECT_EQ(vvvModified[g], vvvOriginal[g]);
+		EXPECT_TRUE(std::any_of(vvvOriginal[g].begin(), vvvOriginal[g].end(), [](const std::vector<char> &vLayer) {
+			return reinterpret_cast<const CMapItemLayerTilemap *>(vLayer.data())->m_Flags & TILESLAYERFLAG_GAME;
+		}));
+	}
+	EXPECT_EQ(NumChanged, 1);
 	Original.Close();
 	Modified.Close();
 
@@ -533,6 +571,109 @@ TEST_F(GameWorld, GTrainAddsSwitchLayerToServedMaps)
 		ASSERT_EQ(pSwitchTiles[i].m_Type, 0);
 	pMap->Unload();
 	EXPECT_TRUE(m_pStorage->RemoveFile(aPath, IStorage::TYPE_SAVE));
+}
+
+TEST_F(GameWorld, GTrainMovesSwitchLayersIntoTheGameGroup)
+{
+	// The editor refuses switch layers in other groups, like the group of
+	// their own that switch layers used to be added in.
+	ASSERT_TRUE(m_pStorage->CreateFolder("maps", IStorage::TYPE_SAVE));
+	const auto WriteMap = [&](const char *pPath, const std::vector<std::vector<int>> &vvFlags, CMapItemAutomapperConfig Config) {
+		CDataFileWriter Writer;
+		ASSERT_TRUE(Writer.Open(m_pStorage.get(), pPath));
+		CMapItemVersion Version = {};
+		Version.m_Version = 1;
+		Writer.AddItem(MAPITEMTYPE_VERSION, 0, sizeof(Version), &Version);
+		const std::vector<CTile> vTiles(4 * 3, CTile{});
+		const std::vector<CSwitchTile> vSwitchTiles(4 * 3, CSwitchTile{});
+		int NumLayers = 0;
+		for(size_t g = 0; g < vvFlags.size(); ++g)
+		{
+			CMapItemGroup Group = {};
+			Group.m_Version = 3;
+			Group.m_StartLayer = NumLayers;
+			Group.m_NumLayers = vvFlags[g].size();
+			StrToInts(Group.m_aName, std::size(Group.m_aName), "Group");
+			Writer.AddItem(MAPITEMTYPE_GROUP, g, sizeof(Group), &Group);
+			for(const int Flags : vvFlags[g])
+			{
+				CMapItemLayerTilemap Layer = {};
+				Layer.m_Layer.m_Type = LAYERTYPE_TILES;
+				Layer.m_Version = 3;
+				Layer.m_Width = 4;
+				Layer.m_Height = 3;
+				Layer.m_Flags = Flags;
+				Layer.m_Image = Layer.m_ColorEnv = -1;
+				Layer.m_Tele = Layer.m_Speedup = Layer.m_Front = Layer.m_Switch = Layer.m_Tune = -1;
+				StrToInts(Layer.m_aName, std::size(Layer.m_aName), "Tiles");
+				Layer.m_Data = Writer.AddData(vTiles.size() * sizeof(CTile), vTiles.data());
+				if(Flags & TILESLAYERFLAG_SWITCH)
+					Layer.m_Switch = Writer.AddData(vSwitchTiles.size() * sizeof(CSwitchTile), vSwitchTiles.data());
+				Writer.AddItem(MAPITEMTYPE_LAYER, NumLayers++, sizeof(Layer), &Layer);
+			}
+		}
+		Writer.AddItem(MAPITEMTYPE_AUTOMAPPER_CONFIG, 0, sizeof(Config), &Config);
+		Writer.Finish();
+	};
+	const auto ReadMap = [&](const char *pPath, CMapItemAutomapperConfig &Config) {
+		std::vector<std::vector<int>> vvFlags;
+		CDataFileReader Reader;
+		if(!Reader.Open(m_pStorage.get(), pPath, IStorage::TYPE_ALL))
+		{
+			ADD_FAILURE() << pPath;
+			return vvFlags;
+		}
+		int GroupsStart, NumGroups, LayersStart, NumLayers, ConfigStart, NumConfigs;
+		Reader.GetType(MAPITEMTYPE_GROUP, &GroupsStart, &NumGroups);
+		Reader.GetType(MAPITEMTYPE_LAYER, &LayersStart, &NumLayers);
+		for(int g = 0; g < NumGroups; ++g)
+		{
+			const auto *pGroup = static_cast<const CMapItemGroup *>(Reader.GetItem(GroupsStart + g));
+			vvFlags.emplace_back();
+			for(int l = pGroup->m_StartLayer; l < pGroup->m_StartLayer + pGroup->m_NumLayers; ++l)
+				vvFlags.back().push_back(static_cast<const CMapItemLayerTilemap *>(Reader.GetItem(LayersStart + l))->m_Flags);
+		}
+		Reader.GetType(MAPITEMTYPE_AUTOMAPPER_CONFIG, &ConfigStart, &NumConfigs);
+		EXPECT_EQ(NumConfigs, 1);
+		if(NumConfigs == 1)
+			Config = *static_cast<const CMapItemAutomapperConfig *>(Reader.GetItem(ConfigStart));
+		return vvFlags;
+	};
+	const int Game = TILESLAYERFLAG_GAME, Switch = TILESLAYERFLAG_SWITCH;
+	struct SCase
+	{
+		std::vector<std::vector<int>> m_vvBefore;
+		std::vector<std::vector<int>> m_vvAfter;
+		int m_aConfigBefore[2];
+		int m_aConfigAfter[2];
+	};
+	const SCase aCases[] = {
+		// A group of its own at the end goes away.
+		{{{Game}, {0}, {Switch}}, {{Game, Switch}, {0}}, {1, 0}, {1, 0}},
+		// Layers after it in its group move up, automapper configs follow.
+		{{{0}, {Game}, {Switch, 0}}, {{0}, {Game, Switch}, {0}}, {2, 1}, {2, 0}},
+		{{{Game, 0}, {Switch}, {0}}, {{Game, 0, Switch}, {}, {0}}, {2, 0}, {2, 0}},
+	};
+	for(const SCase &Case : aCases)
+	{
+		WriteMap("maps/switch_group.map", Case.m_vvBefore, {1, Case.m_aConfigBefore[0], Case.m_aConfigBefore[1], 3, 4, 0});
+		ASSERT_EQ(AddSwitchLayer(m_pStorage.get(), "maps/switch_group.map", IStorage::TYPE_SAVE, "maps/switch_moved.map", IStorage::TYPE_SAVE), EAddSwitchLayer::MOVED);
+		CMapItemAutomapperConfig Config = {};
+		EXPECT_EQ(ReadMap("maps/switch_moved.map", Config), Case.m_vvAfter);
+		EXPECT_EQ(Config.m_GroupId, Case.m_aConfigAfter[0]);
+		EXPECT_EQ(Config.m_LayerId, Case.m_aConfigAfter[1]);
+		EXPECT_EQ(Config.m_AutomapperConfig, 3);
+		EXPECT_EQ(AddSwitchLayer(m_pStorage.get(), "maps/switch_moved.map", IStorage::TYPE_SAVE, "maps/switch_again.map", IStorage::TYPE_SAVE), EAddSwitchLayer::PRESENT);
+
+		std::unique_ptr<IMap> pMap = CreateMap();
+		ASSERT_TRUE(pMap->Load(m_pStorage.get(), "maps/switch_moved.map", IStorage::TYPE_SAVE));
+		CLayers Layers;
+		Layers.Init(pMap.get(), false, false);
+		EXPECT_NE(Layers.SwitchLayer(), nullptr);
+		pMap->Unload();
+		EXPECT_TRUE(m_pStorage->RemoveFile("maps/switch_moved.map", IStorage::TYPE_SAVE));
+	}
+	EXPECT_TRUE(m_pStorage->RemoveFile("maps/switch_group.map", IStorage::TYPE_SAVE));
 }
 
 TEST_F(GameWorld, GTrainHoverDoorHoldsTheTeeUntilTheRelease)
