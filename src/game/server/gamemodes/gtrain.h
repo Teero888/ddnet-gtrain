@@ -26,11 +26,13 @@ class CGameControllerGTrain : public CGameControllerDDNet
 	enum
 	{
 		HOVER_TICKS = 50,
+		// The hover after a won fight, to see its result.
+		FIGHT_BREAK_SECONDS = 10,
 		MAX_FREEZE_DISTANCE = 20,
 		NUM_DIRECTION_PARTICLES = 256,
 		MAX_PATH_NODES = 256,
 		MIN_GOAL_DISTANCE = 50,
-		MAX_GOAL_DISTANCE = 500,
+		MAX_GOAL_DISTANCE = 1000,
 		DEFAULT_SCORE_LIMIT = 10,
 		MAX_SCORE_LIMIT = 1000,
 		// Shorter attempts are no attempts, unless they capture the flag.
@@ -91,6 +93,9 @@ class CGameControllerGTrain : public CGameControllerDDNet
 	int m_aFightTeam[MAX_CLIENTS] = {};
 	int m_aScoreboardTeams[MAX_CLIENTS] = {};
 	bool m_aFightRestart[MAX_CLIENTS] = {};
+	// Until this tick, every attempt of the group hovers, also of members
+	// respawning, so none gets a head start out of the break.
+	int m_aFightBreakEndTick[MAX_CLIENTS] = {};
 	int m_aFightWins[MAX_CLIENTS] = {};
 	CSettings m_aSettings[MAX_CLIENTS];
 	// Every viewer chooses this for themselves, also in fights.
@@ -126,10 +131,12 @@ class CGameControllerGTrain : public CGameControllerDDNet
 	void PlaceRandomly(class CPlayer *pPlayer);
 	// Deletes the player's character if it played already, see the definition.
 	void PlaceForAttempt(class CPlayer *pPlayer, const std::shared_ptr<CGTrainGoal> &pGoal, int Start, int TargetDistance, bool Retry);
-	void RestartFight(int Group);
+	// Places the whole group at the chosen start, a random spot without one.
+	void RestartFight(int Group, std::optional<int> ChosenStart = std::nullopt);
 	bool LeaveFight(int ClientId, bool NewAttempt);
 	int FightSize(int Group) const;
 	int GoalDistance(int Group) const;
+	int HoverTicks(int Group) const;
 	bool CheckFightLeader(int ClientId, const char *pAction);
 	void SendFightChat(int Group, const char *pMessage);
 	void KeepWeapons(class CCharacter *pChr);
@@ -142,7 +149,8 @@ class CGameControllerGTrain : public CGameControllerDDNet
 		const char *m_pNoElo = nullptr;
 	};
 	static void FormatCaptureResult(char *pBuf, int BufSize, int Fails, const std::optional<CEloGain> &Gain);
-	void AnnounceFightScore(int Winner, const std::optional<CEloGain> &Gain);
+	// Returns whether the capture won the fight.
+	bool AnnounceFightScore(int Winner, const std::optional<CEloGain> &Gain);
 	std::optional<CEloGain> AwardElo(int ClientId, bool Frozen);
 	void AddStats(int ClientId, const CGTrainStats &Stats);
 	void EndAttempt(int ClientId, bool Captured);
@@ -181,6 +189,9 @@ public:
 	void Fight(int ClientId, const char *pName);
 	void Freeplay(int ClientId);
 	void Retry(int ClientId);
+	// Retries like the other practice binds, freeplay starts where the player
+	// aims instead.
+	void TeleCursor(int ClientId);
 	void Distance(int ClientId, std::optional<int> Tiles);
 	void NoDoubleJump(int ClientId);
 	void Forwards(int ClientId);

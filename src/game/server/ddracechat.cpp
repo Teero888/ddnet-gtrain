@@ -2009,6 +2009,12 @@ void CGameContext::ConTeleCursor(IConsole::IResult *pResult, void *pUserData)
 	CGameContext *pSelf = (CGameContext *)pUserData;
 	if(!CheckClientId(pResult->m_ClientId))
 		return;
+	// GTrain has no practice mode, it retries or chooses the freeplay start.
+	if(auto *pController = dynamic_cast<CGameControllerGTrain *>(pSelf->m_pController))
+	{
+		pController->TeleCursor(pResult->m_ClientId);
+		return;
+	}
 	CPlayer *pPlayer = pSelf->m_apPlayers[pResult->m_ClientId];
 	if(!pPlayer)
 		return;

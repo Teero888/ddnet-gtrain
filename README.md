@@ -17,14 +17,14 @@ A server-side [DDNet](https://github.com/ddnet/ddnet) mod for training Gores map
 | Command | Description |
 | --- | --- |
 | Kill | New random spot and flag |
-| `/r`, `/retry` | Retry the current spot and flag; practice binds like `/tc`, `/telecursor`, `/invincible`, `/rescue`, `/back`, `/tp`, `/teleport` and `/lasttp` do the same |
+| `/r`, `/retry` | Retry the current spot and flag; practice binds like `/tc`, `/telecursor`, `/invincible`, `/rescue`, `/back`, `/tp`, `/teleport` and `/lasttp` do the same, except `/tc` and `/telecursor` in freeplay |
 | `/fight <player>` | Join a player's fight; `/fight` alone leaves it |
-| `/distance <50-500>` | Your goal distance in tiles; `0` uses the server default |
+| `/distance <50-1000>` | Your goal distance in tiles; `0` uses the server default |
 | `/nodj` | Toggle starting attempts without double jump; touching the ground gives it back |
 | `/forwards` | Toggle goals that only lead towards the finish line, see [below](#forwards) |
 | `/scorelimit <0-1000>` | Points needed to win a fight (default 10, `0` for no limit) |
 | `/shotgun`, `/grenade`, `/laser` (or `/rifle`), `/ninja` | Toggle keeping that weapon in every attempt; ninja never runs out. Captures with kept weapons earn no [ELO](#elo) |
-| `/freeplay` | Toggle training without flags, paths and captures |
+| `/freeplay` | Toggle training without flags, paths and captures. `/tc` or `/telecursor` starts you on the tile you aim at, and `/r` returns there; in a fight, the leader chooses the start of everyone |
 | `/trail` | Toggle showing the particle trail to the flag; it is your own choice, also in fights and while spectating |
 | `/settings [player]` | Show your settings or another player's; in a fight, the leader's settings that apply to it |
 | `/points`, `/elo [player]` | Show your ELO and rank, or another player's |
@@ -89,6 +89,7 @@ Freeplay has no attempts, and rcon cheats stop everything but the playtime from 
 
 - Everyone in a fight trains at the same spot with the same flag. Joining a player who is already fighting merges both groups.
 - Each capture scores a point and announces the standings. The first to reach the score limit wins the fight, and all scores reset.
+- The fight's final standings show as a broadcast to everyone in it, and the next attempt hovers for 10 seconds instead of 1. Members respawning meanwhile hover until then too.
 - The leader's death starts a new attempt for everyone. Other members respawn at the current spot.
 - `/r` only retries the player who used it, the leader included.
 - Fights show up as teams in the scoreboard, with fight points as scores instead of ELO. The leader is shown as `*name*`; the server browser keeps the real name.

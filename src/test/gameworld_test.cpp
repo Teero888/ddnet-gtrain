@@ -70,6 +70,7 @@ public:
 	};
 	std::optional<CTuningParams> m_aLastTuning[MAX_CLIENTS];
 	std::vector<std::string> m_avChatMessages[MAX_CLIENTS];
+	std::vector<std::string> m_avBroadcasts[MAX_CLIENTS];
 	std::vector<CClientIdentity> m_avClientIdentities[MAX_CLIENTS];
 
 	void AdvanceTicks(int Ticks) { m_CurrentGameTick += Ticks; }
@@ -93,6 +94,13 @@ public:
 			Unpacker.GetInt(); // team
 			Unpacker.GetInt(); // sender
 			m_avChatMessages[ClientId].emplace_back(Unpacker.GetString());
+			EXPECT_FALSE(Unpacker.Error());
+		}
+		if(pMsg->m_MsgId == NETMSGTYPE_SV_BROADCAST && ClientId >= 0 && !IsSixup(ClientId))
+		{
+			CUnpacker Unpacker;
+			Unpacker.Reset(pMsg->Data(), pMsg->Size());
+			m_avBroadcasts[ClientId].emplace_back(Unpacker.GetString());
 			EXPECT_FALSE(Unpacker.Error());
 		}
 		if(pMsg->m_MsgId == NETMSGTYPE_SV_TUNEPARAMS && ClientId >= 0)
@@ -1153,6 +1161,75 @@ TEST_F(GameWorld, GTrainFreeplayFollowsFightLeaderAndMembership)
 	m_pServer->Console()->ExecuteLineFlag("freeplay", CFGFLAG_CHAT, Member);
 	EXPECT_GT(TrainingMarkers(Member), 0);
 	EXPECT_GT(TrainingMarkers(Observer), 0);
+}
+
+TEST_F(GameWorld, GTrainFreeplayTeleCursorChoosesTheStart)
+{
+	PrepareTrainingCorridor();
+	g_Config.m_SvSpamprotection = 0;
+	const auto vIds = SpawnTrainingPlayers({"Anna", "Bob"});
+	const int Anna = vIds[0], Bob = vIds[1];
+	auto *pController = static_cast<CGameControllerGTrain *>(GameServer()->m_pController);
+	const auto Tile = [](int x, int y) { return vec2(x * 32 + 16, y * 32 + 16); };
+	const auto AimAndSay = [&](int ClientId, vec2 Pos, const char *pCommand) {
+		CCharacter *pChr = GameServer()->GetPlayerChar(ClientId);
+		CCharacterCore Core = pChr->GetCore();
+		Core.m_Input.m_TargetX = round_to_int(Pos.x - pChr->m_Pos.x);
+		Core.m_Input.m_TargetY = round_to_int(Pos.y - pChr->m_Pos.y);
+		pChr->SetCore(Core);
+		m_pServer->m_avChatMessages[ClientId].clear();
+		Say(ClientId, pCommand);
+		return m_pServer->m_avChatMessages[ClientId].empty() ? std::string() : m_pServer->m_avChatMessages[ClientId].back();
+	};
+	const auto Pos = [&](int ClientId) { return GameServer()->GetPlayerChar(ClientId)->m_Pos; };
+
+	// Outside freeplay, it retries like the other practice binds.
+	const vec2 Start = Pos(Anna);
+	AimAndSay(Anna, Tile(3, 2), "/tc");
+	EXPECT_EQ(Pos(Anna), Start);
+
+	Say(Anna, "/freeplay");
+	for(const char *pCommand : {"/tc", "/telecursor"})
+	{
+		const vec2 Chosen = Tile(str_comp(pCommand, "/tc") == 0 ? 3 : 4, 2);
+		EXPECT_EQ(AimAndSay(Anna, Chosen, pCommand), "") << pCommand;
+		CCharacter *pChr = GameServer()->GetPlayerChar(Anna);
+		EXPECT_EQ(pChr->m_Pos, Chosen) << pCommand;
+		EXPECT_EQ(pChr->m_FreezeTime, 50) << pCommand;
+		EXPECT_TRUE(pChr->m_ZeroGravity) << pCommand;
+		EXPECT_EQ(TrainingMarkers(Anna), 0) << pCommand;
+		// Retries return to the chosen start.
+		pChr->Unfreeze();
+		pController->Tick();
+		pChr->SetPosition(Chosen + vec2(64, 0));
+		pChr->m_Pos = Chosen + vec2(64, 0);
+		Say(Anna, "/r");
+		EXPECT_EQ(Pos(Anna), Chosen) << pCommand;
+	}
+
+	// Walls, freeze and the race lines are no starts.
+	const int Width = GameServer()->Collision()->GetWidth();
+	for(vec2 Invalid : {Tile(3, 1), Tile(3, 3), Tile(1, 2), Tile(Width - 2, 2), vec2(-100, -100)})
+	{
+		EXPECT_EQ(AimAndSay(Anna, Invalid, "/tc"), "Aim at a free tile between the start and the finish line to start there.");
+		EXPECT_EQ(Pos(Anna), Tile(4, 2));
+	}
+
+	// In a fight, the leader chooses the start of everyone.
+	pController->Fight(Bob, "Anna");
+	pController->Tick();
+	EXPECT_EQ(AimAndSay(Bob, Tile(5, 2), "/tc"), "Only the fight leader can choose the start position.");
+	AimAndSay(Anna, Tile(6, 2), "/tc");
+	EXPECT_EQ(Pos(Anna), Tile(6, 2));
+	EXPECT_EQ(Pos(Bob), Tile(6, 2));
+	GameServer()->m_apPlayers[Bob]->KillCharacter(WEAPON_SELF);
+	GameServer()->m_apPlayers[Bob]->ForceSpawn(vec2(80, 80));
+	pController->Tick();
+	EXPECT_EQ(Pos(Bob), Tile(6, 2));
+
+	// Paused players cannot choose one.
+	GameServer()->m_apPlayers[Anna]->Pause(CPlayer::PAUSE_SPEC, true);
+	EXPECT_EQ(AimAndSay(Anna, Tile(3, 2), "/tc"), "You must be playing and unpaused to choose a start position.");
 }
 
 TEST_F(GameWorld, GTrainRetryPreservesGoalAndRestartsTimer)
@@ -2859,9 +2936,9 @@ TEST_F(GameWorld, GTrainGoalDistanceIsPersonalAndSetByFightLeaders)
 	// more than the server default of 3 tiles to one of its sides.
 	const auto LongGoal = [&](int ClientId) { return GoalDistance(ClientId) > 3.0f; };
 
-	EXPECT_EQ(Command(Anna, "distance"), "Goal distance: 3 tiles (server default). Use /distance 50-500 to change it, 0 for the server default.");
-	for(const char *pInvalid : {"distance 501", "distance 49", "distance 1", "distance -1"})
-		EXPECT_EQ(Command(Anna, pInvalid), "The goal distance must be between 50 and 500 tiles, 0 for the server default.") << pInvalid;
+	EXPECT_EQ(Command(Anna, "distance"), "Goal distance: 3 tiles (server default). Use /distance 50-1000 to change it, 0 for the server default.");
+	for(const char *pInvalid : {"distance 1001", "distance 49", "distance 1", "distance -1"})
+		EXPECT_EQ(Command(Anna, pInvalid), "The goal distance must be between 50 and 1000 tiles, 0 for the server default.") << pInvalid;
 
 	// Retries keep the current goal, new goals use the player's own distance.
 	const vec2 Goal = TrainingGoal(Anna);
@@ -2873,17 +2950,17 @@ TEST_F(GameWorld, GTrainGoalDistanceIsPersonalAndSetByFightLeaders)
 	EXPECT_TRUE(LongGoal(Anna));
 	NewAttempt(Bob);
 	EXPECT_FLOAT_EQ(GoalDistance(Bob), 3.0f);
-	EXPECT_EQ(Command(Anna, "distance"), "Goal distance: 50 tiles. Use /distance 50-500 to change it, 0 for the server default.");
+	EXPECT_EQ(Command(Anna, "distance"), "Goal distance: 50 tiles. Use /distance 50-1000 to change it, 0 for the server default.");
 
 	// In a fight, the leader's distance applies to everyone.
 	pController->Fight(Bob, "Anna");
 	pController->Tick();
 	EXPECT_EQ(Command(Bob, "distance 60"), "Only the fight leader can change the goal distance.");
-	EXPECT_EQ(Command(Bob, "distance"), "Goal distance: 50 tiles. Use /distance 50-500 to change it, 0 for the server default.");
+	EXPECT_EQ(Command(Bob, "distance"), "Goal distance: 50 tiles. Use /distance 50-1000 to change it, 0 for the server default.");
 	m_pServer->m_avChatMessages[Bob].clear();
-	EXPECT_EQ(Command(Anna, "distance 500"), "Goal distance set to 500 tiles for new goals.");
+	EXPECT_EQ(Command(Anna, "distance 1000"), "Goal distance set to 1000 tiles for new goals.");
 	ASSERT_FALSE(m_pServer->m_avChatMessages[Bob].empty());
-	EXPECT_EQ(m_pServer->m_avChatMessages[Bob].back(), "Goal distance set to 500 tiles for new goals.");
+	EXPECT_EQ(m_pServer->m_avChatMessages[Bob].back(), "Goal distance set to 1000 tiles for new goals.");
 	NewAttempt(Anna);
 	for(int ClientId : vIds)
 	{
@@ -3032,11 +3109,27 @@ TEST_F(GameWorld, GTrainScoreLimitEndsTheFight)
 	const std::string Messages = Capture(Bob);
 	EXPECT_NE(Messages.find("'Bob' captured the flag (0 fails). Fight score (first to 2): 'Anna': 1, 'Bob': 2"), std::string::npos);
 	EXPECT_NE(Messages.find("'Bob' won the fight with 2 points! The fight score starts over."), std::string::npos);
+	const int BreakTicks = 10 * m_pServer->TickSpeed();
 	for(int ClientId : vIds)
 	{
 		EXPECT_EQ(Score(ClientId), 0);
 		EXPECT_EQ(m_pServer->m_aClients[ClientId].m_Score, 0);
+		ASSERT_FALSE(m_pServer->m_avBroadcasts[ClientId].empty());
+		EXPECT_EQ(m_pServer->m_avBroadcasts[ClientId].back(), "'Bob' won the fight!\n'Bob': 2, 'Anna': 1");
+		EXPECT_EQ(GameServer()->GetPlayerChar(ClientId)->m_FreezeTime, BreakTicks);
 	}
+	// Members dying during the break hover until it ends, the next ones not.
+	const auto Respawn = [&](int ClientId) {
+		GameServer()->m_apPlayers[ClientId]->KillCharacter(WEAPON_SELF);
+		GameServer()->m_apPlayers[ClientId]->ForceSpawn(vec2(80, 80));
+		pController->Tick();
+		return GameServer()->GetPlayerChar(ClientId)->m_FreezeTime;
+	};
+	m_pServer->AdvanceTicks(BreakTicks / 2);
+	EXPECT_EQ(Respawn(Bob), BreakTicks / 2);
+	m_pServer->AdvanceTicks(BreakTicks / 2);
+	EXPECT_EQ(Respawn(Bob), 50);
+	EXPECT_EQ(Respawn(Anna), 50);
 
 	// Without a limit, captures only add up.
 	EXPECT_EQ(Command(Anna, "scorelimit 0"), "The fight score limit is disabled.");
@@ -3063,7 +3156,7 @@ TEST_F(GameWorld, GTrainHelpListsOnlyGTrainCommands)
 	m_pServer->m_avChatMessages[Runner].clear();
 	Say(Runner, "/help");
 	const auto &vMessages = m_pServer->m_avChatMessages[Runner];
-	ASSERT_EQ(vMessages.size(), 18);
+	ASSERT_EQ(vMessages.size(), 19);
 	EXPECT_EQ(vMessages.front(), "GTrain commands:");
 	EXPECT_EQ(vMessages.back(), "Captures on this map earn no ELO.");
 	std::string Help;
